@@ -78,7 +78,7 @@ function ClienteFichaContent() {
   }, [data]);
 
 
-  const sendWahaMessage = async (phone: string | null | undefined, text: string, successText = 'Mensagem enviada pelo WhatsApp integrado.') => {
+  const sendWhatsappMessage = async (phone: string | null | undefined, text: string, successText = 'Mensagem enviada pelo WhatsApp integrado.') => {
     if (!phone) {
       setError('Este cliente não possui telefone cadastrado.');
       return;
@@ -97,13 +97,13 @@ function ClienteFichaContent() {
       const result = await response.json();
 
       if (!response.ok || !result.ok) {
-        setError(result.error || 'Não foi possível enviar pelo WAHA.');
+        setError(result.error || 'Não foi possível enviar pela integração de WhatsApp.');
         return;
       }
 
       setMessage(successText);
     } catch {
-      setError('Erro ao chamar a integração WAHA do FichaPRO.');
+      setError('Erro ao chamar a integração de WhatsApp do FichaPRO.');
     } finally {
       setWhatsappSending(null);
     }
@@ -245,11 +245,11 @@ function ClienteFichaContent() {
           </div>
 
           <div className="client-detail-actions">
-            <button className="primary-button" type="button" onClick={() => sendWahaMessage(cliente.telefone, cobrançaMsg, 'Cobrança enviada pelo WAHA.')} disabled={whatsappSending === cobrançaMsg}>
-              {whatsappSending === cobrançaMsg ? 'Enviando...' : 'Cobrar via WAHA'}
+            <button className="primary-button" type="button" onClick={() => sendWhatsappMessage(cliente.telefone, cobrançaMsg, 'Cobrança enviada pelo WhatsApp integrado.')} disabled={whatsappSending === cobrançaMsg}>
+              {whatsappSending === cobrançaMsg ? 'Enviando...' : 'Cobrar via WhatsApp'}
             </button>
-            <button className="ghost-button" type="button" onClick={() => sendWahaMessage(cliente.telefone, posVendaMsg, 'Pós-venda enviado pelo WAHA.')} disabled={whatsappSending === posVendaMsg}>
-              {whatsappSending === posVendaMsg ? 'Enviando...' : 'Pós-venda WAHA'}
+            <button className="ghost-button" type="button" onClick={() => sendWhatsappMessage(cliente.telefone, posVendaMsg, 'Pós-venda enviado pelo WhatsApp integrado.')} disabled={whatsappSending === posVendaMsg}>
+              {whatsappSending === posVendaMsg ? 'Enviando...' : 'Pós-venda WhatsApp'}
             </button>
             <a className="outline-button" href={whatsappLink(cliente.telefone, cobrançaMsg)} target="_blank">Abrir WhatsApp</a>
             <Link className="outline-button" href={`/pedidos/novo?cliente=${cliente.id}`}>Nova venda</Link>
@@ -331,8 +331,8 @@ function ClienteFichaContent() {
                   <div className="row-actions detail-row-actions">
                     <StatusPill label={situacao} tone={situacao} />
                     {parcela.status !== 'pago' && <button className="outline-button small" onClick={() => handleMarkPaid(parcela.id)}>Marcar pago</button>}
-                    <button className="ghost-button small" type="button" onClick={() => sendWahaMessage(cliente.telefone, msg, 'Lembrete da parcela enviado pelo WAHA.')} disabled={whatsappSending === msg}>
-                      {whatsappSending === msg ? 'Enviando...' : 'WAHA'}
+                    <button className="ghost-button small" type="button" onClick={() => sendWhatsappMessage(cliente.telefone, msg, 'Lembrete da parcela enviado pelo WhatsApp integrado.')} disabled={whatsappSending === msg}>
+                      {whatsappSending === msg ? 'Enviando...' : 'WhatsApp'}
                     </button>
                     <a className="outline-button small" href={whatsappLink(cliente.telefone, msg)} target="_blank">Abrir</a>
                   </div>

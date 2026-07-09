@@ -56,7 +56,7 @@ export default function ConfiguracoesPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [whatsappPhone, setWhatsappPhone] = useState('');
-  const [whatsappMessage, setWhatsappMessage] = useState('Teste FichaPRO DEV via WAHA ✅');
+  const [whatsappMessage, setWhatsappMessage] = useState('Teste FichaPRO DEV via Evolution ✅');
   const [whatsappStatus, setWhatsappStatus] = useState('');
   const [whatsappLoading, setWhatsappLoading] = useState(false);
   const [whatsappSending, setWhatsappSending] = useState(false);
@@ -117,21 +117,21 @@ export default function ConfiguracoesPage() {
 
   async function checkWhatsappStatus() {
     setWhatsappLoading(true);
-    setWhatsappStatus('Consultando WAHA...');
+    setWhatsappStatus('Consultando integração de WhatsApp...');
 
     try {
       const response = await fetch('/api/whatsapp/status', { cache: 'no-store' });
       const result = await response.json();
 
       if (!result.configured) {
-        setWhatsappStatus('WAHA ainda não configurado nas variáveis da Vercel DEV.');
+        setWhatsappStatus('Evolution API ainda não configurada nas variáveis da Vercel DEV.');
       } else if (result.ok) {
-        setWhatsappStatus(`WAHA conectado. Sessão em uso: ${result.session || 'fichapro'}.`);
+        setWhatsappStatus(`Evolution conectada. Instância em uso: ${result.instance || 'nextlead'}. Status: ${result.status || 'connected'}.`);
       } else {
-        setWhatsappStatus(result.error || 'WAHA respondeu, mas a sessão não parece estar pronta.');
+        setWhatsappStatus(result.error || 'Evolution respondeu, mas a instância não parece estar conectada.');
       }
     } catch {
-      setWhatsappStatus('Não foi possível consultar o status do WAHA.');
+      setWhatsappStatus('Não foi possível consultar o status da integração de WhatsApp.');
     } finally {
       setWhatsappLoading(false);
     }
@@ -151,11 +151,11 @@ export default function ConfiguracoesPage() {
       const result = await response.json();
 
       if (!response.ok || !result.ok) {
-        setWhatsappStatus(result.error || 'Não foi possível enviar pelo WAHA.');
+        setWhatsappStatus(result.error || 'Não foi possível enviar pela Evolution API.');
         return;
       }
 
-      setWhatsappStatus(`Mensagem enviada pelo WAHA para ${result.chatId || 'o número informado'}. Confira o WhatsApp de destino.`);
+      setWhatsappStatus(`Mensagem enviada pela Evolution para ${result.number || result.chatId || 'o número informado'}. Confira o WhatsApp de destino.`);
     } catch {
       setWhatsappStatus('Erro ao chamar a rota interna do FichaPRO.');
     } finally {
@@ -248,8 +248,8 @@ export default function ConfiguracoesPage() {
           <div className="panel-header-spread no-margin">
             <div>
               <span className="eyebrow">WhatsApp DEV</span>
-              <h3>Teste de envio pelo WAHA</h3>
-              <p className="section-helper">Use esta área apenas no ambiente DEV para validar a sessão conectada no Railway antes de ligar automações reais.</p>
+              <h3>Teste de envio pela Evolution API</h3>
+              <p className="section-helper">Use esta área apenas no ambiente DEV para validar a instância conectada na Evolution API antes de ligar automações reais.</p>
             </div>
             <button className="outline-button small" type="button" onClick={checkWhatsappStatus} disabled={whatsappLoading}>
               {whatsappLoading ? 'Consultando...' : 'Ver status'}
@@ -266,7 +266,7 @@ export default function ConfiguracoesPage() {
               <textarea value={whatsappMessage} onChange={(event) => setWhatsappMessage(event.target.value)} rows={3} />
             </label>
             <button className="primary-button" type="submit" disabled={whatsappSending || !whatsappPhone.trim() || !whatsappMessage.trim()}>
-              {whatsappSending ? 'Enviando...' : 'Enviar teste pelo WAHA'}
+              {whatsappSending ? 'Enviando...' : 'Enviar teste pela Evolution'}
             </button>
           </form>
 
@@ -274,9 +274,10 @@ export default function ConfiguracoesPage() {
 
           <div className="whatsapp-env-helper-v2">
             <strong>Variáveis esperadas na Vercel DEV</strong>
-            <code>WAHA_BASE_URL</code>
-            <code>WAHA_API_KEY</code>
-            <code>WAHA_SESSION=fichapro</code>
+            <code>WHATSAPP_PROVIDER=evolution</code>
+            <code>EVOLUTION_API_URL</code>
+            <code>EVOLUTION_API_KEY</code>
+            <code>EVOLUTION_INSTANCE=nextlead</code>
           </div>
         </section>
 
