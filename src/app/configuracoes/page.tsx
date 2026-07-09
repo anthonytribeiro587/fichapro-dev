@@ -55,6 +55,11 @@ export default function ConfiguracoesPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [whatsappPhone, setWhatsappPhone] = useState('');
+  const [whatsappMessage, setWhatsappMessage] = useState('Teste FichaPRO DEV via WAHA ✅');
+  const [whatsappStatus, setWhatsappStatus] = useState('');
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [whatsappSending, setWhatsappSending] = useState(false);
 
   const activeCount = useMemo(() => users.filter((user) => user.status === 'ativo').length, [users]);
   const pendingCount = useMemo(() => users.filter((user) => user.status === 'convite_pendente').length, [users]);
@@ -108,6 +113,55 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     loadTeam();
   }, []);
+
+
+  async function checkWhatsappStatus() {
+    setWhatsappLoading(true);
+    setWhatsappStatus('Consultando WAHA...');
+
+    try {
+      const response = await fetch('/api/whatsapp/status', { cache: 'no-store' });
+      const result = await response.json();
+
+      if (!result.configured) {
+        setWhatsappStatus('WAHA ainda não configurado nas variáveis da Vercel DEV.');
+      } else if (result.ok) {
+        setWhatsappStatus(`WAHA conectado. Sessão em uso: ${result.session || 'testeweb'}.`);
+      } else {
+        setWhatsappStatus(result.error || 'WAHA respondeu, mas a sessão não parece estar pronta.');
+      }
+    } catch {
+      setWhatsappStatus('Não foi possível consultar o status do WAHA.');
+    } finally {
+      setWhatsappLoading(false);
+    }
+  }
+
+  async function handleWhatsappTest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setWhatsappSending(true);
+    setWhatsappStatus('Enviando mensagem de teste...');
+
+    try {
+      const response = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: whatsappPhone, message: whatsappMessage })
+      });
+      const result = await response.json();
+
+      if (!response.ok || !result.ok) {
+        setWhatsappStatus(result.error || 'Não foi possível enviar pelo WAHA.');
+        return;
+      }
+
+      setWhatsappStatus('Mensagem enviada pelo WAHA. Confira o WhatsApp de destino.');
+    } catch {
+      setWhatsappStatus('Erro ao chamar a rota interna do FichaPRO.');
+    } finally {
+      setWhatsappSending(false);
+    }
+  }
 
   async function handleInvite(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,6 +242,43 @@ export default function ConfiguracoesPage() {
 
         {error && <div className="notice error compact-notice-v2">{error}</div>}
         {notice && <div className="notice success compact-notice-v2">{notice}</div>}
+
+
+        <section className="settings-card-v2 whatsapp-dev-card-v2">
+          <div className="panel-header-spread no-margin">
+            <div>
+              <span className="eyebrow">WhatsApp DEV</span>
+              <h3>Teste de envio pelo WAHA</h3>
+              <p className="section-helper">Use esta área apenas no ambiente DEV para validar a sessão conectada no Railway antes de ligar automações reais.</p>
+            </div>
+            <button className="outline-button small" type="button" onClick={checkWhatsappStatus} disabled={whatsappLoading}>
+              {whatsappLoading ? 'Consultando...' : 'Ver status'}
+            </button>
+          </div>
+
+          <form className="whatsapp-test-form-v2" onSubmit={handleWhatsappTest}>
+            <label>
+              Telefone de teste
+              <input value={whatsappPhone} onChange={(event) => setWhatsappPhone(event.target.value)} placeholder="Ex.: 51999999999" />
+            </label>
+            <label>
+              Mensagem
+              <textarea value={whatsappMessage} onChange={(event) => setWhatsappMessage(event.target.value)} rows={3} />
+            </label>
+            <button className="primary-button" type="submit" disabled={whatsappSending || !whatsappPhone.trim() || !whatsappMessage.trim()}>
+              {whatsappSending ? 'Enviando...' : 'Enviar teste pelo WAHA'}
+            </button>
+          </form>
+
+          {whatsappStatus && <div className="notice compact-notice-v2 whatsapp-status-v2">{whatsappStatus}</div>}
+
+          <div className="whatsapp-env-helper-v2">
+            <strong>Variáveis esperadas na Vercel DEV</strong>
+            <code>WAHA_BASE_URL</code>
+            <code>WAHA_API_KEY</code>
+            <code>WAHA_SESSION=testeweb</code>
+          </div>
+        </section>
 
         <div className="settings-grid-v2">
           <section className="settings-card-v2">
