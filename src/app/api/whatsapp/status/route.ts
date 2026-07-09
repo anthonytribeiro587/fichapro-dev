@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 import { buildWahaHeaders, getWahaConfig } from '@/lib/waha';
 
 export async function GET() {
@@ -15,7 +18,7 @@ export async function GET() {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), 25000);
 
     const response = await fetch(`${baseUrl}/api/sessions/${session}`, {
       method: 'GET',

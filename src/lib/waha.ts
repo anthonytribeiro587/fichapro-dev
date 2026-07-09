@@ -8,7 +8,7 @@ export function getWahaConfig() {
   return {
     baseUrl: process.env.WAHA_BASE_URL?.replace(/\/$/, ''),
     apiKey: process.env.WAHA_API_KEY,
-    session: process.env.WAHA_SESSION || 'testeweb'
+    session: process.env.WAHA_SESSION || 'fichapro'
   };
 }
 

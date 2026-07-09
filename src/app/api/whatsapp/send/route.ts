@@ -1,4 +1,7 @@
 import { NextResponse } from 'next/server';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 import { buildWahaHeaders, getWahaConfig, normalizeBrazilianWhatsappChatId } from '@/lib/waha';
 
 export async function POST(request: Request) {
@@ -34,7 +37,7 @@ export async function POST(request: Request) {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
+    const timeout = setTimeout(() => controller.abort(), 55000);
 
     const response = await fetch(`${baseUrl}/api/sendText`, {
       method: 'POST',
@@ -43,7 +46,9 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         session: requestedSession || session,
         chatId,
-        text: message
+        text: message,
+        linkPreview: false,
+        linkPreviewHighQuality: false
       })
     }).finally(() => clearTimeout(timeout));
 
@@ -73,7 +78,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         ok: false,
-        error: isAbort ? 'Tempo limite ao chamar o WAHA. A sessão pode estar lenta ou o Railway pode ter travado.' : 'Erro interno ao enviar WhatsApp.'
+        error: isAbort ? 'O WAHA demorou mais de 55 segundos para responder. Confira se a mensagem chegou no WhatsApp; se não chegou, reinicie a sessão no dashboard do WAHA e tente novamente.' : 'Erro interno ao enviar WhatsApp.'
       },
       { status: isAbort ? 504 : 500 }
     );

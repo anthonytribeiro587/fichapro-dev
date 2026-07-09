@@ -126,7 +126,7 @@ export default function ConfiguracoesPage() {
       if (!result.configured) {
         setWhatsappStatus('WAHA ainda não configurado nas variáveis da Vercel DEV.');
       } else if (result.ok) {
-        setWhatsappStatus(`WAHA conectado. Sessão em uso: ${result.session || 'testeweb'}.`);
+        setWhatsappStatus(`WAHA conectado. Sessão em uso: ${result.session || 'fichapro'}.`);
       } else {
         setWhatsappStatus(result.error || 'WAHA respondeu, mas a sessão não parece estar pronta.');
       }
@@ -155,7 +155,7 @@ export default function ConfiguracoesPage() {
         return;
       }
 
-      setWhatsappStatus('Mensagem enviada pelo WAHA. Confira o WhatsApp de destino.');
+      setWhatsappStatus(`Mensagem enviada pelo WAHA para ${result.chatId || 'o número informado'}. Confira o WhatsApp de destino.`);
     } catch {
       setWhatsappStatus('Erro ao chamar a rota interna do FichaPRO.');
     } finally {
@@ -276,7 +276,7 @@ export default function ConfiguracoesPage() {
             <strong>Variáveis esperadas na Vercel DEV</strong>
             <code>WAHA_BASE_URL</code>
             <code>WAHA_API_KEY</code>
-            <code>WAHA_SESSION=testeweb</code>
+            <code>WAHA_SESSION=fichapro</code>
           </div>
         </section>
 
