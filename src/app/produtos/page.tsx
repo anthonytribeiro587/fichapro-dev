@@ -193,13 +193,17 @@ function ProdutosContent() {
   }, [hiddenCategories]);
 
   const getAttentionQuantity = useCallback((produto: Produto | null) => {
-    if (!produto) return 5;
-    return Math.max(1, Number(stockLevels[produto.id] || 5));
+    if (!produto) return 1;
+    const dbValue = Number(produto.quantidade_atencao || 0);
+    if (Number.isFinite(dbValue) && dbValue > 0) return Math.max(1, Math.floor(dbValue));
+    const localValue = Number(stockLevels[produto.id] || 0);
+    if (Number.isFinite(localValue) && localValue > 0) return Math.max(1, Math.floor(localValue));
+    return 1;
   }, [stockLevels]);
 
   const getStockReference = useCallback((produto: Produto | null) => {
-    if (!produto) return 5;
-    return Math.max(Number(produto.estoque || 0), getAttentionQuantity(produto), 5);
+    if (!produto) return 1;
+    return Math.max(Number(produto.estoque || 0), getAttentionQuantity(produto), 1);
   }, [getAttentionQuantity]);
 
   const getLowStockThreshold = useCallback((produto: Produto | null) => {
@@ -463,7 +467,15 @@ function ProdutosContent() {
         }
       }
       const nextAttention = parseAttentionQuantity(attentionDraft);
-      updateStockLevel(savedProduto.id, nextAttention);
+      const { error: attentionError } = await supabase
+        .from('produtos')
+        .update({ quantidade_atencao: nextAttention })
+        .eq('id', savedProduto.id);
+      if (!attentionError) {
+        updateStockLevel(savedProduto.id, null);
+      } else {
+        updateStockLevel(savedProduto.id, nextAttention);
+      }
       updateStockLevel('__draft__', null);
     }
 
@@ -767,7 +779,7 @@ function ProdutosContent() {
                     <button className="add" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => adjustStock(selectedProduto, 1)}><PlusIcon /> 1 estoque</button>
                     <button className="remove" type="button" disabled={adjustingId === selectedProduto.id || Number(selectedProduto.estoque || 0) <= 0} onClick={() => adjustStock(selectedProduto, -1)}><MinusIcon /> 1 estoque</button>
                   </>) }
-                  <button className="remove" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => deleteProduto(selectedProduto)}>Excluir produto</button>
+                  <button className="remove product-delete-action" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => deleteProduto(selectedProduto)}>Excluir produto</button>
                 </div>
               </div>
             </article>
@@ -865,7 +877,7 @@ function ProdutosContent() {
                     <button className="add" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => adjustStock(selectedProduto, 1)}><PlusIcon /> 1 estoque</button>
                     <button className="remove" type="button" disabled={adjustingId === selectedProduto.id || Number(selectedProduto.estoque || 0) <= 0} onClick={() => adjustStock(selectedProduto, -1)}><MinusIcon /> 1 estoque</button>
                   </>) }
-                  <button className="remove" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => deleteProduto(selectedProduto)}>Excluir produto</button>
+                  <button className="remove product-delete-action" type="button" disabled={adjustingId === selectedProduto.id} onClick={() => deleteProduto(selectedProduto)}>Excluir produto</button>
                 </div>
               </div>
             </article>

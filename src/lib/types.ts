@@ -30,6 +30,7 @@ export type Produto = {
   categoria: string | null;
   fornecedor?: string | null;
   foto_url?: string | null;
+  quantidade_atencao?: number | null;
   preco: number;
   estoque: number;
   controla_estoque?: boolean;
