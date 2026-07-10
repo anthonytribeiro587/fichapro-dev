@@ -64,6 +64,7 @@ export async function POST(request: Request) {
   const url = new URL(request.url);
   const empresaId = url.searchParams.get('empresa_id');
   const receivedSecret = url.searchParams.get('secret') || request.headers.get('x-webhook-secret');
+  let eventRowId: string | null = null;
 
   if (!empresaId || !secretMatches(receivedSecret, process.env.WHATSAPP_WEBHOOK_SECRET)) {
     return NextResponse.json({ ok: false, error: 'Webhook não autorizado.' }, { status: 401 });
@@ -86,18 +87,22 @@ export async function POST(request: Request) {
 
     if (duplicated?.status === 'processado') return NextResponse.json({ ok: true, duplicated: true });
 
-    const { data: eventRow } = await admin.from('eventos_webhook').upsert({
+    const { data: eventRow, error: eventError } = await admin.from('eventos_webhook').upsert({
       empresa_id: empresaId,
       provedor: 'evolution',
       evento_externo_id: externalEventId,
       tipo: normalizedEvent,
       status: 'recebido',
-      payload
+      payload,
+      erro: null
     }, { onConflict: 'provedor,evento_externo_id' }).select('id').single();
 
+    if (eventError) throw new Error(`Não foi possível registrar o evento da Evolution: ${eventError.message}`);
+    eventRowId = eventRow?.id || null;
+
     if (!['MESSAGES_UPSERT', 'SEND_MESSAGE'].includes(normalizedEvent) || !message.phone) {
-      if (eventRow?.id) {
-        await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
+      if (eventRowId) {
+        await admin.from('eventos_webhook').update({ status: 'ignorado', processado_em: new Date().toISOString() }).eq('id', eventRowId);
       }
       return NextResponse.json({ ok: true, ignored: true, event: normalizedEvent });
     }
@@ -158,23 +163,32 @@ export async function POST(request: Request) {
       taskAlreadyOpen = Boolean(existingTask);
 
       if (!existingTask) {
-        const { data: owner } = await admin
-          .from('empresa_membros')
-          .select('user_id')
-          .eq('empresa_id', empresaId)
-          .eq('status', 'ativo')
-          .not('user_id', 'is', null)
-          .order('created_at')
-          .limit(1)
-          .maybeSingle();
+        const [ownerResult, integrationResult] = await Promise.all([
+          admin
+            .from('empresa_membros')
+            .select('user_id')
+            .eq('empresa_id', empresaId)
+            .eq('status', 'ativo')
+            .not('user_id', 'is', null)
+            .order('created_at')
+            .limit(1)
+            .maybeSingle(),
+          admin
+            .from('integracoes_empresa')
+            .select('user_id')
+            .eq('empresa_id', empresaId)
+            .eq('provedor', 'evolution')
+            .maybeSingle()
+        ]);
 
-        const taskUserId = owner?.user_id || client?.user_id || null;
+        const taskUserId = ownerResult.data?.user_id || integrationResult.data?.user_id || client?.user_id || null;
         if (!taskUserId) {
-          throw new Error('Mensagem recebida, mas nenhum usuário ativo está vinculado à empresa para receber a tarefa.');
+          throw new Error('Mensagem recebida, mas nenhum usuário ativo está vinculado à empresa para receber a tarefa. Abra o Diagnóstico do WhatsApp e reprocese a última mensagem.');
         }
 
         const { error: taskError } = await admin.from('tarefas_operacionais').insert({
           user_id: taskUserId,
+          responsavel_user_id: taskUserId,
           empresa_id: empresaId,
           cliente_id: client?.id || null,
           tipo: 'responder',
@@ -240,8 +254,8 @@ export async function POST(request: Request) {
       configuracao_publica: { ultima_instancia: payload.instance || null, ultimo_evento: normalizedEvent }
     }, { onConflict: 'empresa_id,provedor' });
 
-    if (eventRow?.id) {
-      await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
+    if (eventRowId) {
+      await admin.from('eventos_webhook').update({ status: 'processado', erro: null, processado_em: new Date().toISOString() }).eq('id', eventRowId);
     }
 
     return NextResponse.json({ ok: true, event: normalizedEvent, clientFound: Boolean(client), taskCreated, taskAlreadyOpen });
@@ -249,6 +263,13 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : 'Erro interno no webhook Evolution.';
     try {
       const admin = createAdminServerClient();
+      if (eventRowId) {
+        await admin.from('eventos_webhook').update({
+          status: 'erro',
+          erro: message,
+          processado_em: new Date().toISOString()
+        }).eq('id', eventRowId);
+      }
       await admin.from('integracoes_empresa').update({
         ultimo_erro: message,
         ultimo_teste_em: new Date().toISOString()
