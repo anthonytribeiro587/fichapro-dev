@@ -16,6 +16,9 @@ export async function GET(request: Request) {
     const companyId = companies?.[0]?.id as string | undefined;
 
     const account = await testMercadoPagoConnection();
+    const nickname = String(account.nickname || '');
+    const email = String(account.email || '');
+    const environment = /^TESTUSER/i.test(nickname) || /test_user/i.test(email) ? 'test' : 'production';
 
     if (companyId) {
       await supabase.from('integracoes_empresa').upsert({
@@ -26,7 +29,8 @@ export async function GET(request: Request) {
         configuracao_publica: {
           account_id: account.id || null,
           nickname: account.nickname || null,
-          site_id: account.site_id || null
+          site_id: account.site_id || null,
+          environment
         },
         ultimo_teste_em: new Date().toISOString(),
         ultimo_erro: null
@@ -37,6 +41,7 @@ export async function GET(request: Request) {
       ok: true,
       configured: true,
       provider: 'mercadopago',
+      environment,
       account: {
         id: account.id || null,
         nickname: account.nickname || null,
@@ -51,6 +56,7 @@ export async function GET(request: Request) {
       ok: false,
       configured: !message.includes('ACCESS_TOKEN'),
       provider: 'mercadopago',
+      environment: 'unknown',
       error: message
     }, { status: message.includes('ACCESS_TOKEN') ? 503 : 502 });
   }
