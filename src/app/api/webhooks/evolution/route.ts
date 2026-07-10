@@ -7,10 +7,11 @@ import { createAdminServerClient } from '@/lib/server-auth';
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
+type UnknownRecord = Record<string, any>;
 type EvolutionPayload = {
   event?: string;
   instance?: string;
-  data?: Record<string, any>;
+  data?: UnknownRecord;
   sender?: string;
   date_time?: string;
 };
@@ -22,7 +23,7 @@ function secretMatches(received: string | null, expected: string | undefined) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function messageText(data: Record<string, any>) {
+function messageText(data: UnknownRecord) {
   const message = data.message || data.messages?.[0]?.message || {};
   return message.conversation
     || message.extendedTextMessage?.text
@@ -34,7 +35,7 @@ function messageText(data: Record<string, any>) {
     || '';
 }
 
-function messageType(data: Record<string, any>) {
+function messageType(data: UnknownRecord) {
   const message = data.message || data.messages?.[0]?.message || {};
   if (message.imageMessage) return 'imagem';
   if (message.audioMessage) return 'audio';
@@ -55,8 +56,7 @@ function extractMessageData(payload: EvolutionPayload) {
     fromMe: Boolean(key.fromMe ?? raw.fromMe ?? data.fromMe),
     name: String(raw.pushName || data.pushName || data.name || ''),
     text: messageText(raw),
-    type: messageType(raw),
-    raw
+    type: messageType(raw)
   };
 }
 
@@ -96,7 +96,9 @@ export async function POST(request: Request) {
     }, { onConflict: 'provedor,evento_externo_id' }).select('id').single();
 
     if (!['MESSAGES_UPSERT', 'SEND_MESSAGE'].includes(normalizedEvent) || !message.phone) {
-      if (eventRow?.id) await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
+      if (eventRow?.id) {
+        await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
+      }
       return NextResponse.json({ ok: true, ignored: true, event: normalizedEvent });
     }
 
@@ -121,7 +123,9 @@ export async function POST(request: Request) {
       .select('id')
       .single();
 
-    if (conversationError || !conversation) throw new Error(conversationError?.message || 'Não foi possível registrar a conversa.');
+    if (conversationError || !conversation) {
+      throw new Error(conversationError?.message || 'Não foi possível registrar a conversa.');
+    }
 
     await admin.from('mensagens_whatsapp').upsert({
       empresa_id: empresaId,
@@ -137,6 +141,7 @@ export async function POST(request: Request) {
       enviada_em: new Date().toISOString()
     }, { onConflict: 'empresa_id,id_externo' });
 
+    let taskCreated = false;
     if (!message.fromMe) {
       const { data: existingTask } = await admin
         .from('tarefas_operacionais')
@@ -148,26 +153,59 @@ export async function POST(request: Request) {
         .maybeSingle();
 
       if (!existingTask) {
-        const owner = await admin.from('empresa_membros').select('user_id').eq('empresa_id', empresaId).eq('status', 'ativo').order('created_at').limit(1).maybeSingle();
-        await admin.from('tarefas_operacionais').insert({
-          user_id: owner.data?.user_id || null,
-          empresa_id: empresaId,
-          cliente_id: client?.id || null,
-          tipo: 'responder',
-          titulo: `Responder ${client?.nome || message.name || normalizedPhone}`,
-          descricao: message.text ? `Mensagem recebida: “${message.text.slice(0, 220)}”` : `Nova mensagem do tipo ${message.type}.`,
-          status: 'pendente',
-          prioridade: 'normal',
-          origem: 'evolution',
-          data_limite: new Date().toISOString().slice(0, 10),
-          metadata: { conversa_id: conversation.id, mensagem_id: message.id || null }
-        });
+        const { data: owner } = await admin
+          .from('empresa_membros')
+          .select('user_id')
+          .eq('empresa_id', empresaId)
+          .eq('status', 'ativo')
+          .not('user_id', 'is', null)
+          .order('created_at')
+          .limit(1)
+          .maybeSingle();
+
+        if (owner?.user_id) {
+          const { error: taskError } = await admin.from('tarefas_operacionais').insert({
+            user_id: owner.user_id,
+            empresa_id: empresaId,
+            cliente_id: client?.id || null,
+            tipo: 'responder',
+            titulo: `Responder ${client?.nome || message.name || normalizedPhone}`,
+            descricao: message.text ? `Mensagem recebida: “${message.text.slice(0, 220)}”` : `Nova mensagem do tipo ${message.type}.`,
+            status: 'pendente',
+            prioridade: 'normal',
+            origem: 'evolution',
+            data_limite: new Date().toISOString().slice(0, 10),
+            metadata: { conversa_id: conversation.id, mensagem_id: message.id || null }
+          });
+          taskCreated = !taskError;
+        }
       }
 
       if (process.env.WHATSAPP_AUTO_ACK_ENABLED === 'true') {
         await sendEvolutionText(normalizedPhone, 'Recebi sua mensagem 😊 Já estou verificando e retorno em seguida.').catch(() => null);
       }
     }
+
+    await admin.from('automacao_execucoes').upsert({
+      empresa_id: empresaId,
+      evento_origem: message.fromMe ? 'mensagem_enviada' : 'mensagem_recebida',
+      referencia_externa: externalEventId,
+      status: 'concluida',
+      entrada: {
+        telefone: normalizedPhone,
+        cliente_id: client?.id || null,
+        tipo_mensagem: message.type,
+        evento: normalizedEvent
+      },
+      saida: {
+        conversa_id: conversation.id,
+        cliente_localizado: Boolean(client),
+        tarefa_criada: taskCreated
+      },
+      tentativas: 1,
+      iniciou_em: new Date().toISOString(),
+      concluiu_em: new Date().toISOString()
+    }, { onConflict: 'empresa_id,evento_origem,referencia_externa' });
 
     await admin.from('integracoes_empresa').upsert({
       empresa_id: empresaId,
@@ -178,8 +216,11 @@ export async function POST(request: Request) {
       configuracao_publica: { ultima_instancia: payload.instance || null, ultimo_evento: normalizedEvent }
     }, { onConflict: 'empresa_id,provedor' });
 
-    if (eventRow?.id) await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
-    return NextResponse.json({ ok: true, event: normalizedEvent, clientFound: Boolean(client) });
+    if (eventRow?.id) {
+      await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
+    }
+
+    return NextResponse.json({ ok: true, event: normalizedEvent, clientFound: Boolean(client), taskCreated });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : 'Erro interno no webhook Evolution.' }, { status: 500 });
   }
