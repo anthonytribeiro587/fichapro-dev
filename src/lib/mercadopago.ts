@@ -33,6 +33,15 @@ export function getMercadoPagoConfig() {
   };
 }
 
+function mercadoPagoApiMessage(data: any, status: number) {
+  const base = data?.message || data?.error || `Mercado Pago respondeu com status ${status}.`;
+  const causes = Array.isArray(data?.cause)
+    ? data.cause.map((item: any) => item?.description || item?.code).filter(Boolean)
+    : [];
+  const details = [data?.status, data?.status_detail, ...causes].filter(Boolean);
+  return details.length ? `${base} — ${details.join(' | ')}` : base;
+}
+
 export async function mercadoPagoRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { accessToken } = getMercadoPagoConfig();
   if (!accessToken) throw new Error('MERCADO_PAGO_NOT_CONFIGURED');
@@ -50,8 +59,7 @@ export async function mercadoPagoRequest<T>(path: string, init: RequestInit = {}
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = data?.message || data?.error || `Mercado Pago respondeu com status ${response.status}.`;
-    throw new Error(`MERCADO_PAGO_ERROR:${message}`);
+    throw new Error(`MERCADO_PAGO_ERROR:${mercadoPagoApiMessage(data, response.status)}`);
   }
   return data as T;
 }
