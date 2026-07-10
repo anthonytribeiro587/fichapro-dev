@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { sendEvolutionText } from '@/lib/evolution-server';
-import { isAuthError, requireAuthenticatedUser } from '@/lib/server-auth';
+import { sendEvolutionAudio, sendEvolutionMedia, sendEvolutionText } from '@/lib/evolution-server';
+import { createAdminServerClient, isAuthError, requireAuthenticatedUser } from '@/lib/server-auth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 45;
@@ -9,6 +9,10 @@ type SendBody = {
   empresa_id?: string;
   conversa_id?: string;
   mensagem?: string;
+  arquivo_path?: string;
+  arquivo_nome?: string;
+  arquivo_mime?: string;
+  arquivo_tipo?: 'imagem' | 'audio' | 'video' | 'documento';
 };
 
 function extractMessageId(value: unknown) {
@@ -23,20 +27,38 @@ function extractMessageId(value: unknown) {
   ) || null;
 }
 
+function evolutionMediaType(type: SendBody['arquivo_tipo']) {
+  if (type === 'imagem') return 'image' as const;
+  if (type === 'video') return 'video' as const;
+  return 'document' as const;
+}
+
 export async function POST(request: Request) {
   try {
     const { user, supabase } = await requireAuthenticatedUser(request);
     const body = await request.json().catch(() => null) as SendBody | null;
     const empresaId = body?.empresa_id?.trim();
     const conversaId = body?.conversa_id?.trim();
-    const mensagem = body?.mensagem?.trim();
+    const mensagem = body?.mensagem?.trim() || '';
+    const arquivoPath = body?.arquivo_path?.trim() || '';
+    const arquivoNome = body?.arquivo_nome?.trim() || 'arquivo';
+    const arquivoMime = body?.arquivo_mime?.trim() || 'application/octet-stream';
+    const arquivoTipo = body?.arquivo_tipo;
 
-    if (!empresaId || !conversaId || !mensagem) {
-      return NextResponse.json({ ok: false, error: 'Informe empresa, conversa e mensagem.' }, { status: 400 });
+    if (!empresaId || !conversaId || (!mensagem && !arquivoPath)) {
+      return NextResponse.json({ ok: false, error: 'Informe empresa, conversa e uma mensagem ou arquivo.' }, { status: 400 });
     }
 
     if (mensagem.length > 4000) {
       return NextResponse.json({ ok: false, error: 'A mensagem deve ter no máximo 4.000 caracteres.' }, { status: 400 });
+    }
+
+    if (arquivoPath && (!arquivoTipo || !['imagem', 'audio', 'video', 'documento'].includes(arquivoTipo))) {
+      return NextResponse.json({ ok: false, error: 'Tipo de arquivo inválido.' }, { status: 400 });
+    }
+
+    if (arquivoPath && !arquivoPath.startsWith(`${empresaId}/${conversaId}/`)) {
+      return NextResponse.json({ ok: false, error: 'O arquivo não pertence a esta conversa.' }, { status: 403 });
     }
 
     const { data: empresa } = await supabase
@@ -60,9 +82,42 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'Conversa não encontrada.' }, { status: 404 });
     }
 
-    const response = await sendEvolutionText(conversa.telefone, mensagem);
+    let response: Record<string, unknown>;
+    if (arquivoPath) {
+      const admin = createAdminServerClient();
+      const { data: signed, error: signedError } = await admin.storage
+        .from('whatsapp-media')
+        .createSignedUrl(arquivoPath, 60 * 60);
+
+      if (signedError || !signed?.signedUrl) {
+        return NextResponse.json({ ok: false, error: `Não foi possível preparar o anexo: ${signedError?.message || 'URL indisponível'}` }, { status: 500 });
+      }
+
+      response = arquivoTipo === 'audio'
+        ? await sendEvolutionAudio(conversa.telefone, signed.signedUrl)
+        : await sendEvolutionMedia(conversa.telefone, {
+            mediaType: evolutionMediaType(arquivoTipo),
+            mimeType: arquivoMime,
+            mediaUrl: signed.signedUrl,
+            fileName: arquivoNome,
+            caption: mensagem
+          });
+    } else {
+      response = await sendEvolutionText(conversa.telefone, mensagem);
+    }
+
     const externalId = extractMessageId(response) || `local-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
+    const messageType = arquivoTipo || 'texto';
+    const metadata = arquivoPath
+      ? {
+          origem: 'caixa_de_entrada',
+          user_id: user.id,
+          arquivo_path: arquivoPath,
+          arquivo_nome: arquivoNome,
+          arquivo_mime: arquivoMime
+        }
+      : { origem: 'caixa_de_entrada', user_id: user.id };
 
     const { data: savedMessage, error: messageError } = await supabase
       .from('mensagens_whatsapp')
@@ -72,14 +127,14 @@ export async function POST(request: Request) {
         cliente_id: conversa.cliente_id || null,
         id_externo: externalId,
         direcao: 'saida',
-        tipo: 'texto',
-        conteudo: mensagem,
+        tipo: messageType,
+        conteudo: mensagem || (arquivoTipo ? `[${arquivoTipo}]` : null),
         status: 'enviada',
         enviada_por: 'equipe',
-        metadata: { origem: 'caixa_de_entrada', user_id: user.id },
+        metadata,
         enviada_em: now
       }, { onConflict: 'empresa_id,id_externo' })
-      .select('id,conteudo,direcao,status,enviada_em')
+      .select('id,conteudo,direcao,status,enviada_em,metadata,tipo')
       .single();
 
     if (messageError) {
