@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import type { Empresa } from '@/lib/types';
+import type { Empresa, ModulosEmpresa } from '@/lib/types';
 
 type IconName = 'home' | 'bag' | 'history' | 'users' | 'tag' | 'calendar' | 'chart' | 'settings' | 'search' | 'userPlus' | 'clipboard' | 'sparkles' | 'creditCard';
 type SectionKey = 'geral' | 'vendas' | 'relacionamento' | 'gestao' | 'configuracoes';
@@ -17,17 +17,18 @@ type SideNavItem = {
   section: SectionKey;
   mobileLabel?: string;
   hideOnMobile?: boolean;
+  module?: keyof ModulosEmpresa;
 };
 
 const baseNavItems: SideNavItem[] = [
   { href: '/dashboard', label: 'Início', mobileLabel: 'Início', icon: 'home', section: 'geral' },
-  { href: '/operacao', label: 'Próximas ações', mobileLabel: 'Ações', icon: 'clipboard', section: 'geral' },
-  { href: '/pedidos/novo', label: 'Nova venda', mobileLabel: 'Vender', icon: 'bag', section: 'vendas' },
-  { href: '/pedidos/historico', label: 'Histórico de vendas', icon: 'history', section: 'vendas', hideOnMobile: true },
+  { href: '/operacao', label: 'Próximas ações', mobileLabel: 'Ações', icon: 'clipboard', section: 'geral', module: 'tarefas' },
+  { href: '/pedidos/novo', label: 'Nova venda', mobileLabel: 'Vender', icon: 'bag', section: 'vendas', module: 'vendas' },
+  { href: '/pedidos/historico', label: 'Histórico de vendas', icon: 'history', section: 'vendas', hideOnMobile: true, module: 'vendas' },
   { href: '/clientes', label: 'Clientes', mobileLabel: 'Clientes', icon: 'users', section: 'relacionamento' },
   { href: '/produtos', label: 'Produtos e serviços', icon: 'tag', section: 'relacionamento', hideOnMobile: true },
   { href: '/vencimentos', label: 'Cobranças e vencimentos', mobileLabel: 'Cobrar', icon: 'calendar', section: 'gestao' },
-  { href: '/pagamentos', label: 'Pagamentos integrados', icon: 'creditCard', section: 'gestao', hideOnMobile: true },
+  { href: '/pagamentos', label: 'Pagamentos integrados', icon: 'creditCard', section: 'gestao', hideOnMobile: true, module: 'pagamentos' },
   { href: '/automacoes', label: 'Automações', mobileLabel: 'Automação', icon: 'sparkles', section: 'gestao' },
   { href: '/relatorios', label: 'Relatórios', icon: 'chart', section: 'gestao', hideOnMobile: true },
   { href: '/configuracoes/negocio', label: 'Personalização', icon: 'settings', section: 'configuracoes', hideOnMobile: true },
@@ -43,19 +44,10 @@ const sections: Array<{ key: SectionKey; label: string }> = [
 ];
 
 const titles: Record<string, string> = {
-  '/dashboard': 'Início',
-  '/operacao': 'Próximas ações',
-  '/clientes': 'Clientes',
-  '/pedidos': 'Vendas',
-  '/pedidos/novo': 'Nova venda',
-  '/pedidos/historico': 'Histórico de vendas',
-  '/vendas': 'Nova venda',
-  '/vencimentos': 'Cobranças e vencimentos',
-  '/pagamentos': 'Pagamentos integrados',
-  '/automacoes': 'Automações',
-  '/produtos': 'Produtos e serviços',
-  '/relatorios': 'Relatórios',
-  '/configuracoes': 'Equipe e acessos',
+  '/dashboard': 'Início', '/operacao': 'Próximas ações', '/clientes': 'Clientes', '/pedidos': 'Vendas',
+  '/pedidos/novo': 'Nova venda', '/pedidos/historico': 'Histórico de vendas', '/vendas': 'Nova venda',
+  '/vencimentos': 'Cobranças e vencimentos', '/pagamentos': 'Pagamentos integrados', '/automacoes': 'Automações',
+  '/produtos': 'Produtos e serviços', '/relatorios': 'Relatórios', '/configuracoes': 'Equipe e acessos',
   '/configuracoes/negocio': 'Personalização'
 };
 
@@ -135,13 +127,15 @@ export function AppShell({ children }: { children: ReactNode }) {
     item: String(company?.configuracoes?.termo_produto || 'Produto ou serviço')
   }), [company]);
 
-  const navItems = useMemo(() => baseNavItems.map((item) => {
-    if (item.href === '/clientes') return { ...item, label: `${terms.customer}s`, mobileLabel: terms.customer };
-    if (item.href === '/pedidos/novo') return { ...item, label: `Nova ${terms.sale.toLowerCase()}`, mobileLabel: terms.sale };
-    if (item.href === '/pedidos/historico') return { ...item, label: `Histórico de ${terms.sale.toLowerCase()}s` };
-    if (item.href === '/produtos') return { ...item, label: `${terms.item}s` };
-    return item;
-  }), [terms]);
+  const navItems = useMemo(() => baseNavItems
+    .filter((item) => !item.module || company?.modulos?.[item.module] !== false)
+    .map((item) => {
+      if (item.href === '/clientes') return { ...item, label: `${terms.customer}s`, mobileLabel: terms.customer };
+      if (item.href === '/pedidos/novo') return { ...item, label: `Nova ${terms.sale.toLowerCase()}`, mobileLabel: terms.sale };
+      if (item.href === '/pedidos/historico') return { ...item, label: `Histórico de ${terms.sale.toLowerCase()}s` };
+      if (item.href === '/produtos') return { ...item, label: `${terms.item}s` };
+      return item;
+    }), [company?.modulos, terms]);
 
   const title = useMemo(() => {
     if (pathname?.startsWith('/clientes/') && pathname !== '/clientes') return `Ficha do ${terms.customer.toLowerCase()}`;
@@ -166,6 +160,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const accent = String(company?.configuracoes?.cor_marca || '#8f4f35');
   const companyName = String(company?.configuracoes?.nome_exibicao || company?.nome || 'Minha empresa');
+  const salesEnabled = company?.modulos?.vendas !== false;
 
   return (
     <div className="app-shell" style={{ '--company-accent': accent } as React.CSSProperties}>
@@ -174,6 +169,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <nav className="side-nav grouped-side-nav" aria-label="Navegação principal">
           {sections.map((section) => {
             const items = navItems.filter((item) => item.section === section.key);
+            if (items.length === 0) return null;
             return <div className="nav-section" key={section.key}><span className="nav-section-title">{section.label}</span>{items.map((item) => <Link key={item.href} className={`nav-item ${isItemActive(item.href) ? 'active' : ''}`} href={item.href}><span className="nav-icon"><Icon name={item.icon} /></span>{item.label}</Link>)}</div>;
           })}
         </nav>
@@ -187,7 +183,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <main className="main-content retrofit-main">
         <div className="mobile-topbar"><Link className="brand brand-with-logo mobile-brand-logo" href="/dashboard"><img className="brand-logo-horizontal" src="/brand/logo-horizontal-transparent.png" alt="FichaPRO" /></Link><button className="ghost-button small" onClick={handleLogout}>Sair</button></div>
-        <header className="topbar retrofit-topbar"><div className="page-title-clean"><span className="eyebrow">{context}</span><h1>{title}</h1></div><div className="top-actions"><Link className="ghost-button icon-action" href="/clientes?novo=1"><Icon name="userPlus" /> Novo {terms.customer.toLowerCase()}</Link><Link className="primary-button icon-action" href="/pedidos/novo"><Icon name="bag" /> Nova {terms.sale.toLowerCase()}</Link></div></header>
+        <header className="topbar retrofit-topbar"><div className="page-title-clean"><span className="eyebrow">{context}</span><h1>{title}</h1></div><div className="top-actions"><Link className="ghost-button icon-action" href="/clientes?novo=1"><Icon name="userPlus" /> Novo {terms.customer.toLowerCase()}</Link>{salesEnabled && <Link className="primary-button icon-action" href="/pedidos/novo"><Icon name="bag" /> Nova {terms.sale.toLowerCase()}</Link>}</div></header>
         {children}
       </main>
 
