@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     }
 
     const normalizedPhone = normalizeBrazilianWhatsappNumber(message.phone) || message.phone;
-    const { data: clients } = await admin.from('clientes').select('id,nome,telefone').eq('empresa_id', empresaId);
+    const { data: clients } = await admin.from('clientes').select('id,nome,telefone,user_id').eq('empresa_id', empresaId);
     const client = (clients || []).find((item) => {
       const clientPhone = normalizeBrazilianWhatsappNumber(item.telefone || '');
       return clientPhone === normalizedPhone || clientPhone?.endsWith(normalizedPhone.slice(-10));
@@ -127,7 +127,7 @@ export async function POST(request: Request) {
       throw new Error(conversationError?.message || 'Não foi possível registrar a conversa.');
     }
 
-    await admin.from('mensagens_whatsapp').upsert({
+    const { error: messageError } = await admin.from('mensagens_whatsapp').upsert({
       empresa_id: empresaId,
       conversa_id: conversation.id,
       cliente_id: client?.id || null,
@@ -141,7 +141,10 @@ export async function POST(request: Request) {
       enviada_em: new Date().toISOString()
     }, { onConflict: 'empresa_id,id_externo' });
 
+    if (messageError) throw new Error(`Não foi possível salvar a mensagem: ${messageError.message}`);
+
     let taskCreated = false;
+    let taskAlreadyOpen = false;
     if (!message.fromMe) {
       const { data: existingTask } = await admin
         .from('tarefas_operacionais')
@@ -151,6 +154,8 @@ export async function POST(request: Request) {
         .in('status', ['pendente', 'em_andamento'])
         .contains('metadata', { conversa_id: conversation.id })
         .maybeSingle();
+
+      taskAlreadyOpen = Boolean(existingTask);
 
       if (!existingTask) {
         const { data: owner } = await admin
@@ -163,22 +168,29 @@ export async function POST(request: Request) {
           .limit(1)
           .maybeSingle();
 
-        if (owner?.user_id) {
-          const { error: taskError } = await admin.from('tarefas_operacionais').insert({
-            user_id: owner.user_id,
-            empresa_id: empresaId,
-            cliente_id: client?.id || null,
-            tipo: 'responder',
-            titulo: `Responder ${client?.nome || message.name || normalizedPhone}`,
-            descricao: message.text ? `Mensagem recebida: “${message.text.slice(0, 220)}”` : `Nova mensagem do tipo ${message.type}.`,
-            status: 'pendente',
-            prioridade: 'normal',
-            origem: 'evolution',
-            data_limite: new Date().toISOString().slice(0, 10),
-            metadata: { conversa_id: conversation.id, mensagem_id: message.id || null }
-          });
-          taskCreated = !taskError;
+        const taskUserId = owner?.user_id || client?.user_id || null;
+        if (!taskUserId) {
+          throw new Error('Mensagem recebida, mas nenhum usuário ativo está vinculado à empresa para receber a tarefa.');
         }
+
+        const { error: taskError } = await admin.from('tarefas_operacionais').insert({
+          user_id: taskUserId,
+          empresa_id: empresaId,
+          cliente_id: client?.id || null,
+          tipo: 'responder',
+          titulo: `Responder ${client?.nome || message.name || normalizedPhone}`,
+          descricao: message.text ? `Mensagem recebida: “${message.text.slice(0, 220)}”` : `Nova mensagem do tipo ${message.type}.`,
+          status: 'pendente',
+          prioridade: 'normal',
+          origem: 'evolution',
+          data_limite: new Date().toISOString().slice(0, 10),
+          metadata: { conversa_id: conversation.id, mensagem_id: message.id || null }
+        });
+
+        if (taskError) {
+          throw new Error(`Mensagem recebida, mas a tarefa de resposta não foi criada: ${taskError.message}`);
+        }
+        taskCreated = true;
       }
 
       if (process.env.WHATSAPP_AUTO_ACK_ENABLED === 'true') {
@@ -210,7 +222,8 @@ export async function POST(request: Request) {
         saida: {
           conversa_id: conversation.id,
           cliente_localizado: Boolean(client),
-          tarefa_criada: taskCreated
+          tarefa_criada: taskCreated,
+          tarefa_ja_aberta: taskAlreadyOpen
         },
         tentativas: 1,
         iniciou_em: new Date().toISOString(),
@@ -231,8 +244,18 @@ export async function POST(request: Request) {
       await admin.from('eventos_webhook').update({ status: 'processado', processado_em: new Date().toISOString() }).eq('id', eventRow.id);
     }
 
-    return NextResponse.json({ ok: true, event: normalizedEvent, clientFound: Boolean(client), taskCreated });
+    return NextResponse.json({ ok: true, event: normalizedEvent, clientFound: Boolean(client), taskCreated, taskAlreadyOpen });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : 'Erro interno no webhook Evolution.' }, { status: 500 });
+    const message = error instanceof Error ? error.message : 'Erro interno no webhook Evolution.';
+    try {
+      const admin = createAdminServerClient();
+      await admin.from('integracoes_empresa').update({
+        ultimo_erro: message,
+        ultimo_teste_em: new Date().toISOString()
+      }).eq('empresa_id', empresaId).eq('provedor', 'evolution');
+    } catch {
+      // Mantém o erro original do webhook.
+    }
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
