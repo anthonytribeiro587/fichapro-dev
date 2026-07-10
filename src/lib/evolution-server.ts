@@ -11,7 +11,8 @@ async function evolutionRequest<T>(path: string, init: RequestInit = {}): Promis
   });
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    const message = data?.message || data?.error || `Evolution respondeu com status ${response.status}.`;
+    const rawMessage = data?.message || data?.error || `Evolution respondeu com status ${response.status}.`;
+    const message = Array.isArray(rawMessage) ? rawMessage.join(' | ') : String(rawMessage);
     throw new Error(`EVOLUTION_ERROR:${message}`);
   }
   return data as T;
@@ -29,19 +30,32 @@ export async function getEvolutionWebhook() {
   return evolutionRequest<Record<string, unknown>>(`/webhook/find/${encodeURIComponent(instance)}`);
 }
 
+const webhookEvents = ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE', 'CONNECTION_UPDATE'];
+
 export async function setEvolutionWebhook(webhookUrl: string) {
   const { instance } = getEvolutionConfig();
   if (!instance) throw new Error('EVOLUTION_NOT_CONFIGURED');
-  return evolutionRequest<Record<string, unknown>>(`/webhook/set/${encodeURIComponent(instance)}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      enabled: true,
-      url: webhookUrl,
-      webhookByEvents: false,
-      webhookBase64: false,
-      events: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE', 'CONNECTION_UPDATE']
-    })
-  });
+
+  const webhook = {
+    enabled: true,
+    url: webhookUrl,
+    webhookByEvents: false,
+    webhookBase64: false,
+    events: webhookEvents
+  };
+
+  try {
+    return await evolutionRequest<Record<string, unknown>>(`/webhook/set/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ webhook })
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith('EVOLUTION_ERROR:')) throw error;
+    return evolutionRequest<Record<string, unknown>>(`/webhook/set/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify(webhook)
+    });
+  }
 }
 
 export async function sendEvolutionText(phone: string, message: string) {
@@ -50,15 +64,23 @@ export async function sendEvolutionText(phone: string, message: string) {
   const number = normalizeBrazilianWhatsappNumber(phone);
   if (!number) throw new Error('INVALID_PHONE');
 
-  return evolutionRequest<Record<string, unknown>>(`/message/sendText/${encodeURIComponent(instance)}`, {
-    method: 'POST',
-    body: JSON.stringify({
-      number,
-      textMessage: { text: message },
-      delay: 700,
-      linkPreview: false
-    })
-  });
+  try {
+    return await evolutionRequest<Record<string, unknown>>(`/message/sendText/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ number, text: message, delay: 700, linkPreview: false })
+    });
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.startsWith('EVOLUTION_ERROR:')) throw error;
+    return evolutionRequest<Record<string, unknown>>(`/message/sendText/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        number,
+        textMessage: { text: message },
+        delay: 700,
+        linkPreview: false
+      })
+    });
+  }
 }
 
 export function evolutionErrorMessage(error: unknown) {
