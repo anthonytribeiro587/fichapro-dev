@@ -115,7 +115,7 @@ function PagamentosContent() {
     setError(null);
     setMessage(null);
     setPanelError(null);
-    setPanelMessage('Conectando ao Mercado Pago e criando o Pix...');
+    setPanelMessage(mpEnvironment === 'test' ? 'Criando uma order de teste no Mercado Pago...' : 'Conectando ao Mercado Pago e criando o Pix...');
     setGenerated(null);
 
     try {
@@ -142,7 +142,8 @@ function PagamentosContent() {
 
       setGenerated(payload.cobranca as CobrancaIntegrada);
       setPanelError(null);
-      setPanelMessage(payload.reused ? 'Cobrança existente recuperada com segurança.' : 'Pix gerado e vinculado ao cliente.');
+      setPanelMessage(payload.message || (payload.reused ? 'Cobrança existente recuperada com segurança.' : 'Pix gerado e vinculado ao cliente.'));
+      if (payload.test_mode) setMpEnvironment('test');
       await loadData();
       panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } catch (requestError) {
@@ -195,7 +196,7 @@ function PagamentosContent() {
         <aside className={styles.createPanel} ref={panelRef}>
           <span className={styles.kicker}>Nova cobrança</span><h3>Gerar Pix individual</h3><p>O e-mail é exigido pelo Mercado Pago. O cliente receberá a cobrança pelo canal que você escolher.</p>
 
-          {mpEnvironment === 'test' && <Notice type="danger">Credencial de teste conectada. Ela valida a integração, mas não representa sua conta real. Para gerar e receber um Pix real, troque o Access Token pela credencial de produção.</Notice>}
+          {mpEnvironment === 'test' && <Notice>Ambiente de teste conectado. O FichaPRO usa o cenário oficial APRO: a order é simulada e aprovada automaticamente, sem movimentar dinheiro. Para cobrar clientes reais, troque o Access Token pela credencial de produção.</Notice>}
           {panelError && <Notice type="danger">{panelError}</Notice>}
           {panelMessage && <Notice type="success">{panelMessage}</Notice>}
 
@@ -204,13 +205,13 @@ function PagamentosContent() {
             <div className={styles.formGrid}><label>Valor<input required inputMode="decimal" placeholder="0,00" value={form.valor} onChange={(event) => setForm((current) => ({ ...current, valor: event.target.value }))} /></label><label>Vencimento<input required type="date" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></label></div>
             <label>E-mail do pagador<input required type="email" placeholder="cliente@email.com" value={form.payer_email} onChange={(event) => setForm((current) => ({ ...current, payer_email: event.target.value }))} /></label>
             <label>Descrição<input required value={form.descricao} onChange={(event) => setForm((current) => ({ ...current, descricao: event.target.value }))} /></label>
-            <button type="submit" disabled={saving || !empresa}>{saving ? 'Gerando cobrança...' : 'Gerar Pix seguro'}</button>
+            <button type="submit" disabled={saving || !empresa}>{saving ? 'Gerando cobrança...' : mpEnvironment === 'test' ? 'Simular Pix de teste' : 'Gerar Pix seguro'}</button>
           </form>
 
           {generated && <div className={styles.generated}>
-            <div className={styles.generatedHead}><span>Pix criado</span><strong>{formatCurrency(generated.valor)}</strong></div>
+            <div className={styles.generatedHead}><span>{mpEnvironment === 'test' ? 'Order de teste criada' : 'Pix criado'}</span><strong>{formatCurrency(generated.valor)}</strong></div>
             {generated.qr_code_base64 && <img src={`data:image/png;base64,${generated.qr_code_base64}`} alt="QR Code Pix" />}
-            {generated.pix_copia_cola ? <button type="button" onClick={() => copyPix(generated.pix_copia_cola)}>{copied ? 'Código copiado ✓' : 'Copiar Pix Copia e Cola'}</button> : <Notice type="danger">O Mercado Pago criou a cobrança, mas não devolveu o código Pix. Confira se a credencial é de produção.</Notice>}
+            {generated.pix_copia_cola ? <button type="button" onClick={() => copyPix(generated.pix_copia_cola)}>{copied ? 'Código copiado ✓' : 'Copiar Pix Copia e Cola'}</button> : <Notice>{mpEnvironment === 'test' ? 'No cenário de teste, o Mercado Pago pode aprovar automaticamente sem devolver uma imagem de QR Code.' : 'A cobrança foi criada, mas o Mercado Pago não devolveu o código Pix.'}</Notice>}
             {generated.link_pagamento && <a href={generated.link_pagamento} target="_blank" rel="noreferrer">Abrir página de pagamento</a>}
           </div>}
         </aside>
