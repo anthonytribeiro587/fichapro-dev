@@ -4313,3 +4313,76 @@ input[type='number'] {
   .produtos-model-page.compact-mode .compact-detail-buttons{grid-template-columns:1fr!important;}
   .produtos-model-page.compact-mode .compact-detail-buttons .product-delete-action{width:100%!important;}
 }
+
+/* v38 - detalhes do produto: rolagem própria e estável no Safari/iPhone */
+@media (max-width: 900px), (pointer: coarse){
+  .mobile-detail-backdrop:has(.product-mobile-detail-panel){
+    overflow:hidden!important;
+    overscroll-behavior:none!important;
+  }
+
+  .product-mobile-detail-panel{
+    display:flex!important;
+    flex-direction:column!important;
+    width:100%!important;
+    max-width:560px!important;
+    height:calc(100dvh - 16px)!important;
+    max-height:calc(100dvh - 16px)!important;
+    padding:14px 14px calc(14px + env(safe-area-inset-bottom, 0px))!important;
+    overflow:hidden!important;
+    border-radius:22px 22px 0 0!important;
+    overscroll-behavior:contain!important;
+  }
+
+  .product-mobile-detail-panel>.modal-head{
+    flex:0 0 auto!important;
+    display:grid!important;
+    grid-template-columns:minmax(0,1fr) 46px!important;
+    align-items:start!important;
+    gap:10px!important;
+    margin:0 0 12px!important;
+    padding:0 0 12px!important;
+    border-bottom:1px solid var(--line)!important;
+    background:var(--surface)!important;
+    z-index:2!important;
+  }
+
+  .product-mobile-detail-panel>.modal-head h3{
+    margin:4px 0 0!important;
+    font-size:21px!important;
+    line-height:1.15!important;
+  }
+
+  .product-mobile-detail-panel>.modal-head .icon-button{
+    width:46px!important;
+    min-width:46px!important;
+    height:46px!important;
+    min-height:46px!important;
+    padding:0!important;
+    border-radius:15px!important;
+  }
+
+  .product-mobile-detail-scroll{
+    flex:1 1 auto!important;
+    min-height:0!important;
+    max-height:none!important;
+    display:grid!important;
+    grid-template-columns:1fr!important;
+    align-content:start!important;
+    gap:14px!important;
+    padding:0 2px 8px 0!important;
+    overflow-x:hidden!important;
+    overflow-y:auto!important;
+    overscroll-behavior:contain!important;
+    -webkit-overflow-scrolling:touch!important;
+    touch-action:pan-y!important;
+  }
+
+  .product-mobile-detail-scroll .produto-model-photo,
+  .product-mobile-detail-scroll .compact-photo{
+    flex:none!important;
+    width:100%!important;
+    height:220px!important;
+    min-height:220px!important;
+  }
+}

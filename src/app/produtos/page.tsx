@@ -83,6 +83,7 @@ function ProdutosContent() {
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
   const sortMenuRef = useRef<HTMLDivElement | null>(null);
   const moreFiltersRef = useRef<HTMLDivElement | null>(null);
+  const mobileProductDetailRef = useRef<HTMLElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -371,6 +372,43 @@ function ProdutosContent() {
   useEffect(() => {
     loadStockMovements(selectedProduto?.id || null);
   }, [selectedProduto?.id, loadStockMovements]);
+
+  useEffect(() => {
+    if (!mobileDetailOpen || typeof window === 'undefined') return;
+
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const previousBodyStyles = {
+      position: body.style.position,
+      top: body.style.top,
+      width: body.style.width,
+      overflow: body.style.overflow
+    };
+
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.width = '100%';
+    body.style.overflow = 'hidden';
+
+    const frame = window.requestAnimationFrame(() => {
+      mobileProductDetailRef.current?.scrollTo({ top: 0, behavior: 'auto' });
+    });
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMobileDetailOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener('keydown', handleKeyDown);
+      body.style.position = previousBodyStyles.position;
+      body.style.top = previousBodyStyles.top;
+      body.style.width = previousBodyStyles.width;
+      body.style.overflow = previousBodyStyles.overflow;
+      window.scrollTo(0, scrollY);
+    };
+  }, [mobileDetailOpen]);
 
   const summary = useMemo(() => {
     const ativos = produtos.filter((produto) => produto.status === 'ativo').length;
@@ -819,7 +857,7 @@ function ProdutosContent() {
               <button className="outline-button icon-button" type="button" onClick={() => setMobileDetailOpen(false)}>×</button>
             </div>
 
-            <article className="produtos-model-detail compact-detail mobile-product-detail-card">
+            <article ref={mobileProductDetailRef} className="produtos-model-detail compact-detail mobile-product-detail-card product-mobile-detail-scroll">
               <div className="produto-model-photo compact-photo">
                 <Image src={displayPhoto} alt="Produto selecionado" width={320} height={320} />
                 <button type="button" className="produto-model-photo-edit" onClick={() => openEdit(selectedProduto)} aria-label="Alterar foto"><ImageEditIcon /></button>
