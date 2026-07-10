@@ -20,17 +20,106 @@ type SendBody = {
   arquivo_tipo?: 'imagem' | 'audio' | 'video' | 'documento';
 };
 
+type UnknownRecord = Record<string, any>;
+
+function findKeyMessageId(value: unknown, depth = 0): string | null {
+  if (!value || depth > 10) return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findKeyMessageId(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+  const object = value as UnknownRecord;
+
+  for (const candidate of [
+    object.key?.id,
+    object.message?.key?.id,
+    object.data?.key?.id,
+    object.data?.message?.key?.id
+  ]) {
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+
+  for (const item of Object.values(object)) {
+    const found = findKeyMessageId(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findNamedMessageId(value: unknown, depth = 0): string | null {
+  if (!value || depth > 10) return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findNamedMessageId(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+  const object = value as UnknownRecord;
+
+  for (const key of ['messageId', 'message_id', 'wamid']) {
+    const candidate = object[key];
+    if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  }
+
+  if (
+    typeof object.id === 'string'
+    && object.id.trim()
+    && ('messageTimestamp' in object || 'status' in object || 'message' in object)
+    && !object.id.includes('@')
+  ) {
+    return object.id.trim();
+  }
+
+  for (const item of Object.values(object)) {
+    const found = findNamedMessageId(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 function extractMessageId(value: unknown) {
-  if (!value || typeof value !== 'object') return null;
-  const response = value as Record<string, any>;
-  return String(
-    response.key?.id
-    || response.message?.key?.id
-    || response.data?.key?.id
-    || response.data?.message?.key?.id
-    || response.id
-    || ''
-  ) || null;
+  return findKeyMessageId(value) || findNamedMessageId(value);
+}
+
+function extractInitialStatus(value: unknown, depth = 0): string | null {
+  if (!value || depth > 8) return null;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = extractInitialStatus(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+  const object = value as UnknownRecord;
+
+  for (const key of ['status', 'messageStatus', 'message_status', 'ack']) {
+    if (!(key in object)) continue;
+    const raw = String(object[key] ?? '').toUpperCase();
+    const numeric = Number(object[key]);
+    if (raw.includes('PLAYED') || raw === 'READ' || numeric === 4 || numeric === 5) return 'lida';
+    if (raw.includes('DELIVERY') || raw.includes('DELIVERED') || numeric === 3) return 'entregue';
+    if (raw.includes('SERVER_ACK') || raw === 'SENT' || raw === 'PENDING' || numeric === 1 || numeric === 2) return 'enviada';
+    if (raw.includes('ERROR') || raw.includes('FAILED') || numeric === 0) return 'falhou';
+  }
+
+  for (const item of Object.values(object)) {
+    const found = extractInitialStatus(item, depth + 1);
+    if (found) return found;
+  }
+  return null;
 }
 
 function evolutionMediaType(type: SendBody['arquivo_tipo']) {
@@ -171,23 +260,26 @@ export async function POST(request: Request) {
       response = await sendEvolutionText(conversa.telefone, mensagem);
     }
 
-    const externalId = extractMessageId(response) || `local-${crypto.randomUUID()}`;
+    const providerMessageId = extractMessageId(response);
+    const externalId = providerMessageId || `local-${crypto.randomUUID()}`;
+    const initialStatus = extractInitialStatus(response) || 'enviada';
     const now = new Date().toISOString();
     const messageType = arquivoTipo || 'texto';
-    const metadata = arquivoPath
-      ? {
-          origem: 'caixa_de_entrada',
-          user_id: user.id,
-          arquivo_path: arquivoPath,
-          arquivo_nome: arquivoNome,
-          arquivo_mime: arquivoMime,
-          provider_message_id: externalId
-        }
-      : {
-          origem: 'caixa_de_entrada',
-          user_id: user.id,
-          provider_message_id: externalId
-        };
+    const responseKeys = Object.keys(response || {}).slice(0, 12);
+
+    const metadata = {
+      origem: 'caixa_de_entrada',
+      user_id: user.id,
+      provider_message_id: providerMessageId,
+      provider_id_detectado: Boolean(providerMessageId),
+      provider_status_inicial: initialStatus,
+      provider_response_keys: responseKeys,
+      ...(arquivoPath ? {
+        arquivo_path: arquivoPath,
+        arquivo_nome: arquivoNome,
+        arquivo_mime: arquivoMime
+      } : {})
+    };
 
     const { data: savedMessage, error: messageError } = await supabase
       .from('mensagens_whatsapp')
@@ -199,7 +291,7 @@ export async function POST(request: Request) {
         direcao: 'saida',
         tipo: messageType,
         conteudo: mensagem || (arquivoTipo ? `[${arquivoTipo}]` : null),
-        status: 'enviada',
+        status: initialStatus,
         enviada_por: 'equipe',
         metadata,
         enviada_em: now
@@ -226,7 +318,12 @@ export async function POST(request: Request) {
         .contains('metadata', { conversa_id: conversaId })
     ]);
 
-    return NextResponse.json({ ok: true, message: savedMessage, provider: response });
+    return NextResponse.json({
+      ok: true,
+      message: savedMessage,
+      provider: response,
+      provider_message_id: providerMessageId
+    });
   } catch (error) {
     if (isAuthError(error)) {
       return NextResponse.json({ ok: false, error: 'Sessão inválida.' }, { status: 401 });
