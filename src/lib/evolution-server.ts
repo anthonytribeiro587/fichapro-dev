@@ -35,6 +35,29 @@ function collectMessages(value: unknown): string[] {
   return [];
 }
 
+function findStringByKeys(value: unknown, keys: string[], depth = 0): string | null {
+  if (!value || depth > 6) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringByKeys(item, keys, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== 'object') return null;
+
+  const object = value as Record<string, unknown>;
+  const normalized = new Set(keys.map((key) => key.toLowerCase()));
+  for (const [key, item] of Object.entries(object)) {
+    if (normalized.has(key.toLowerCase()) && typeof item === 'string' && item.trim()) return item.trim();
+  }
+  for (const item of Object.values(object)) {
+    const found = findStringByKeys(item, keys, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 async function evolutionRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { baseUrl, apiKey } = getEvolutionConfig();
   if (!baseUrl || !apiKey) throw new Error('EVOLUTION_NOT_CONFIGURED');
@@ -110,6 +133,39 @@ export async function setEvolutionWebhook(webhookUrl: string) {
   }
 
   throw new Error(`EVOLUTION_WEBHOOK_REJECTED:${[...new Set(rejected)].join(' || ')}`);
+}
+
+export async function fetchEvolutionProfilePicture(phone: string) {
+  const { instance } = getEvolutionConfig();
+  if (!instance) throw new Error('EVOLUTION_NOT_CONFIGURED');
+  const number = normalizeBrazilianWhatsappNumber(phone);
+  if (!number) throw new Error('INVALID_PHONE');
+
+  const attempts = [
+    { number },
+    { number: `${number}@s.whatsapp.net` }
+  ];
+
+  for (const payload of attempts) {
+    try {
+      const response = await evolutionRequest<Record<string, unknown>>(
+        `/chat/fetchProfilePictureUrl/${encodeURIComponent(instance)}`,
+        { method: 'POST', body: JSON.stringify(payload) }
+      );
+      const url = findStringByKeys(response, [
+        'profilePictureUrl',
+        'profilePicUrl',
+        'pictureUrl',
+        'profile_picture_url',
+        'url'
+      ]);
+      return { url, raw: response };
+    } catch (error) {
+      if (!(error instanceof EvolutionRequestError) || ![400, 404, 422].includes(error.status)) throw error;
+    }
+  }
+
+  return { url: null, raw: null };
 }
 
 export async function sendEvolutionText(phone: string, message: string) {

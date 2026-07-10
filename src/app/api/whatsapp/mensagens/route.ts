@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { sendEvolutionAudio, sendEvolutionMedia, sendEvolutionText } from '@/lib/evolution-server';
+import {
+  fetchEvolutionProfilePicture,
+  sendEvolutionAudio,
+  sendEvolutionMedia,
+  sendEvolutionText
+} from '@/lib/evolution-server';
 import { createAdminServerClient, isAuthError, requireAuthenticatedUser } from '@/lib/server-auth';
 
 export const runtime = 'nodejs';
@@ -22,6 +27,7 @@ function extractMessageId(value: unknown) {
     response.key?.id
     || response.message?.key?.id
     || response.data?.key?.id
+    || response.data?.message?.key?.id
     || response.id
     || ''
   ) || null;
@@ -31,6 +37,65 @@ function evolutionMediaType(type: SendBody['arquivo_tipo']) {
   if (type === 'imagem') return 'image' as const;
   if (type === 'video') return 'video' as const;
   return 'document' as const;
+}
+
+export async function GET(request: Request) {
+  try {
+    const { supabase } = await requireAuthenticatedUser(request);
+    const url = new URL(request.url);
+    const empresaId = url.searchParams.get('empresa_id')?.trim();
+    const conversaId = url.searchParams.get('conversa_id')?.trim();
+
+    if (!empresaId || !conversaId) {
+      return NextResponse.json({ ok: false, error: 'Informe empresa e conversa.' }, { status: 400 });
+    }
+
+    const { data: conversa, error: conversaError } = await supabase
+      .from('conversas_whatsapp')
+      .select('id,empresa_id,telefone,metadata')
+      .eq('id', conversaId)
+      .eq('empresa_id', empresaId)
+      .single();
+
+    if (conversaError || !conversa) {
+      return NextResponse.json({ ok: false, error: 'Conversa não encontrada.' }, { status: 404 });
+    }
+
+    const existing = typeof conversa.metadata?.profile_picture_url === 'string'
+      ? conversa.metadata.profile_picture_url
+      : null;
+
+    if (existing) {
+      return NextResponse.json({ ok: true, profile_picture_url: existing, cached: true });
+    }
+
+    const profile = await fetchEvolutionProfilePicture(conversa.telefone);
+    if (!profile.url) {
+      return NextResponse.json({ ok: true, profile_picture_url: null, unavailable: true });
+    }
+
+    await supabase
+      .from('conversas_whatsapp')
+      .update({
+        metadata: {
+          ...(conversa.metadata || {}),
+          profile_picture_url: profile.url,
+          profile_picture_updated_at: new Date().toISOString()
+        }
+      })
+      .eq('id', conversaId)
+      .eq('empresa_id', empresaId);
+
+    return NextResponse.json({ ok: true, profile_picture_url: profile.url, cached: false });
+  } catch (error) {
+    if (isAuthError(error)) {
+      return NextResponse.json({ ok: false, error: 'Sessão inválida.' }, { status: 401 });
+    }
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Não foi possível consultar a foto do contato.'
+    }, { status: 502 });
+  }
 }
 
 export async function POST(request: Request) {
@@ -115,9 +180,14 @@ export async function POST(request: Request) {
           user_id: user.id,
           arquivo_path: arquivoPath,
           arquivo_nome: arquivoNome,
-          arquivo_mime: arquivoMime
+          arquivo_mime: arquivoMime,
+          provider_message_id: externalId
         }
-      : { origem: 'caixa_de_entrada', user_id: user.id };
+      : {
+          origem: 'caixa_de_entrada',
+          user_id: user.id,
+          provider_message_id: externalId
+        };
 
     const { data: savedMessage, error: messageError } = await supabase
       .from('mensagens_whatsapp')
@@ -134,7 +204,7 @@ export async function POST(request: Request) {
         metadata,
         enviada_em: now
       }, { onConflict: 'empresa_id,id_externo' })
-      .select('id,conteudo,direcao,status,enviada_em,metadata,tipo')
+      .select('id,empresa_id,conversa_id,cliente_id,id_externo,conteudo,direcao,status,enviada_por,enviada_em,created_at,metadata,tipo')
       .single();
 
     if (messageError) {
