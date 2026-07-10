@@ -44,21 +44,37 @@ export async function POST(request: Request) {
 
     const webhookUrl = `${publicAppUrl(request)}/api/webhooks/evolution?empresa_id=${encodeURIComponent(empresaId)}&secret=${encodeURIComponent(secret)}`;
     const response = await setEvolutionWebhook(webhookUrl);
+    const confirmation = await getEvolutionWebhook().catch(() => null);
+    const safeUrl = webhookUrl.replace(secret, '***');
 
-    await supabase.from('integracoes_empresa').upsert({
+    const { error: integrationError } = await supabase.from('integracoes_empresa').upsert({
       empresa_id: empresaId,
       provedor: 'evolution',
       status: 'ativa',
       configuracao_publica: {
-        webhook_url: webhookUrl.replace(secret, '***'),
+        webhook_url: safeUrl,
         eventos: ['MESSAGES_UPSERT', 'MESSAGES_UPDATE', 'SEND_MESSAGE', 'CONNECTION_UPDATE'],
-        configurado_em: new Date().toISOString()
+        configurado_em: new Date().toISOString(),
+        confirmado: Boolean(confirmation)
       },
       ultimo_teste_em: new Date().toISOString(),
       ultimo_erro: null
     }, { onConflict: 'empresa_id,provedor' });
 
-    return NextResponse.json({ ok: true, webhookUrl: webhookUrl.replace(secret, '***'), response });
+    if (integrationError) {
+      return NextResponse.json({
+        ok: false,
+        error: `A Evolution aceitou o webhook, mas o FichaPRO não conseguiu registrar a configuração: ${integrationError.message}`
+      }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      ok: true,
+      webhookUrl: safeUrl,
+      response,
+      confirmation,
+      message: confirmation ? 'Webhook configurado e confirmado na Evolution.' : 'Webhook enviado para a Evolution.'
+    });
   } catch (error) {
     if (isAuthError(error)) return NextResponse.json({ ok: false, error: 'Sessão inválida.' }, { status: 401 });
     return NextResponse.json({ ok: false, error: evolutionErrorMessage(error) }, { status: 502 });
