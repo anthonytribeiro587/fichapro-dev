@@ -25,6 +25,7 @@ function PagamentosContent() {
   const [generated, setGenerated] = useState<CobrancaIntegrada | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [filter, setFilter] = useState<'todas' | 'pendente' | 'pago'>('todas');
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +156,32 @@ function PagamentosContent() {
     }
   }
 
+  async function syncCharge(chargeId: string) {
+    if (syncingId) return;
+    setSyncingId(chargeId);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const response = await authenticatedFetch('/api/cobrancas/sincronizar', {
+        method: 'POST',
+        body: JSON.stringify({ cobranca_id: chargeId })
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(payload.error || 'Não foi possível sincronizar a cobrança.');
+        return;
+      }
+
+      setMessage(payload.message || 'Cobrança sincronizada com o Mercado Pago.');
+      await loadData();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : 'Falha de comunicação ao sincronizar a cobrança.');
+    } finally {
+      setSyncingId(null);
+    }
+  }
+
   async function copyPix(code?: string | null) {
     if (!code) return;
     await navigator.clipboard.writeText(code);
@@ -188,7 +215,11 @@ function PagamentosContent() {
               <div className={styles.avatar}>{(charge.clientes?.nome || 'CL').slice(0,2).toUpperCase()}</div>
               <div className={styles.chargeCopy}><strong>{charge.clientes?.nome || 'Cliente'}</strong><span>{charge.metadata?.descricao as string || 'Cobrança FichaPRO'}</span><small>{charge.vencimento ? `Vence em ${formatDate(charge.vencimento)}` : `Criada em ${formatDate(charge.created_at.slice(0,10))}`}</small></div>
               <div className={styles.chargeValue}><strong>{formatCurrency(charge.valor)}</strong><span className={`${styles.status} ${styles[charge.status]}`}>{charge.status}</span></div>
-              <div className={styles.chargeActions}>{charge.pix_copia_cola && charge.status === 'pendente' && <button type="button" onClick={() => copyPix(charge.pix_copia_cola)}>Copiar Pix</button>}{charge.link_pagamento && charge.status === 'pendente' && <a href={charge.link_pagamento} target="_blank" rel="noreferrer">Abrir</a>}</div>
+              <div className={styles.chargeActions}>
+                {charge.status === 'pendente' && <button type="button" disabled={syncingId === charge.id} onClick={() => syncCharge(charge.id)}>{syncingId === charge.id ? 'Sincronizando...' : 'Atualizar status'}</button>}
+                {charge.pix_copia_cola && charge.status === 'pendente' && <button type="button" onClick={() => copyPix(charge.pix_copia_cola)}>Copiar Pix</button>}
+                {charge.link_pagamento && charge.status === 'pendente' && <a href={charge.link_pagamento} target="_blank" rel="noreferrer">Abrir</a>}
+              </div>
             </article>)}
           </div>
         </section>
@@ -196,7 +227,7 @@ function PagamentosContent() {
         <aside className={styles.createPanel} ref={panelRef}>
           <span className={styles.kicker}>Nova cobrança</span><h3>Gerar Pix individual</h3><p>O e-mail é exigido pelo Mercado Pago. O cliente receberá a cobrança pelo canal que você escolher.</p>
 
-          {mpEnvironment === 'test' && <Notice>Ambiente de teste conectado. O FichaPRO usa o cenário oficial APRO: a order é simulada e aprovada automaticamente, sem movimentar dinheiro. Para cobrar clientes reais, troque o Access Token pela credencial de produção.</Notice>}
+          {mpEnvironment === 'test' && <Notice>Ambiente de teste conectado. O FichaPRO usa o cenário oficial APRO: a order é simulada e aprovada automaticamente, sem movimentar dinheiro. Para cobrar clientes reais, troque o Access Token pela credencial de produção e faça um novo deploy.</Notice>}
           {panelError && <Notice type="danger">{panelError}</Notice>}
           {panelMessage && <Notice type="success">{panelMessage}</Notice>}
 
