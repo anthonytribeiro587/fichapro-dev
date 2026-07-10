@@ -19,6 +19,18 @@ type Diagnostic = {
   incomingMessages: Array<{ id: string; conversa_id: string; cliente_id?: string | null; tipo?: string; conteudo?: string | null; enviada_em: string }>;
   responseTasks: Array<{ id: string; titulo: string; status: string; descricao?: string | null; created_at: string }>;
   conversations: Array<{ id: string; telefone: string; nome_contato?: string | null; status: string; ultima_mensagem_em?: string | null }>;
+  provider?: {
+    reachable: boolean;
+    error?: string | null;
+    connectionReachable: boolean;
+    connectionError?: string | null;
+    enabled: boolean;
+    url: string;
+    expectedUrl: string;
+    urlMatches: boolean;
+    events: string[];
+    receivesMessages: boolean;
+  };
   queryErrors?: string[];
 };
 
@@ -36,6 +48,7 @@ function DiagnosticContent() {
   const [diagnostic, setDiagnostic] = useState<Diagnostic | null>(null);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
+  const [selfTesting, setSelfTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -52,7 +65,6 @@ function DiagnosticContent() {
   const loadDiagnostic = useCallback(async (companyId?: string) => {
     setLoading(true);
     setError(null);
-    setMessage(null);
 
     try {
       let currentCompanyId: string | null = companyId || empresaId;
@@ -81,25 +93,30 @@ function DiagnosticContent() {
 
   useEffect(() => { loadDiagnostic(); }, [loadDiagnostic]);
 
-  async function reprocessLatestMessage() {
-    if (!empresaId || processing) return;
-    setProcessing(true);
+  async function runAction(action: 'self_test' | 'reprocess_latest') {
+    if (!empresaId) return;
+    const isSelfTest = action === 'self_test';
+    if ((isSelfTest && selfTesting) || (!isSelfTest && processing)) return;
+
+    if (isSelfTest) setSelfTesting(true);
+    else setProcessing(true);
     setError(null);
     setMessage(null);
 
     try {
       const response = await authFetch('/api/integracoes/evolution/diagnostico', {
         method: 'POST',
-        body: JSON.stringify({ empresa_id: empresaId })
+        body: JSON.stringify({ empresa_id: empresaId, action })
       });
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || 'Não foi possível criar a tarefa.');
-      setMessage(payload.message || 'Tarefa criada.');
+      if (!response.ok) throw new Error(payload.error || 'Não foi possível executar o teste.');
+      setMessage(payload.message || 'Teste concluído.');
       await loadDiagnostic(empresaId);
     } catch (processError) {
-      setError(processError instanceof Error ? processError.message : 'Não foi possível reprocessar a última mensagem.');
+      setError(processError instanceof Error ? processError.message : 'Não foi possível executar o teste.');
     } finally {
-      setProcessing(false);
+      if (isSelfTest) setSelfTesting(false);
+      else setProcessing(false);
     }
   }
 
@@ -107,6 +124,7 @@ function DiagnosticContent() {
   const lastMessage = diagnostic?.incomingMessages?.[0];
   const lastTask = diagnostic?.responseTasks?.[0];
   const integrationError = diagnostic?.integration?.ultimo_erro;
+  const provider = diagnostic?.provider;
 
   const steps = [
     {
@@ -126,15 +144,23 @@ function DiagnosticContent() {
     }
   ];
 
+  const providerChecks = [
+    { label: 'Evolution respondeu à consulta', done: Boolean(provider?.reachable), detail: provider?.error || 'API acessível.' },
+    { label: 'Webhook está habilitado', done: Boolean(provider?.enabled), detail: provider?.enabled ? 'Configuração ativa.' : 'A configuração está desabilitada.' },
+    { label: 'URL salva é a esperada', done: Boolean(provider?.urlMatches), detail: provider?.urlMatches ? 'A URL confere com o FichaPRO DEV.' : 'A URL salva não corresponde ao endpoint atual.' },
+    { label: 'Evento de mensagens está ativo', done: Boolean(provider?.receivesMessages), detail: provider?.receivesMessages ? 'MESSAGES_UPSERT configurado.' : 'MESSAGES_UPSERT não foi encontrado.' }
+  ];
+
   return (
     <div className={styles.page}>
       <section className={styles.hero}>
         <div>
           <span>Diagnóstico da integração</span>
           <h2>WhatsApp, da mensagem à próxima ação</h2>
-          <p>Veja exatamente até onde o evento chegou e recrie a tarefa da última mensagem quando necessário.</p>
+          <p>Teste separadamente o FichaPRO e a entrega real da Evolution. Assim fica claro em qual lado o fluxo parou.</p>
         </div>
         <div className={styles.heroActions}>
+          <button type="button" onClick={() => runAction('self_test')} disabled={selfTesting || loading}>{selfTesting ? 'Testando FichaPRO...' : 'Testar FichaPRO internamente'}</button>
           <button type="button" onClick={() => loadDiagnostic(empresaId || undefined)} disabled={loading}>{loading ? 'Atualizando...' : 'Atualizar diagnóstico'}</button>
           <Link href="/operacao">Abrir próximas ações</Link>
         </div>
@@ -144,6 +170,31 @@ function DiagnosticContent() {
       {message && <Notice type="success">{message}</Notice>}
       {integrationError && <Notice type="danger">Último erro registrado pela Evolution: {integrationError}</Notice>}
       {diagnostic?.queryErrors?.length ? <Notice type="danger">{diagnostic.queryErrors.join(' | ')}</Notice> : null}
+
+      <section className={styles.providerPanel}>
+        <div className={styles.providerHead}>
+          <div>
+            <span>Configuração lida diretamente da Evolution</span>
+            <h3>{provider?.urlMatches && provider?.receivesMessages && provider?.enabled ? 'Webhook configurado corretamente' : 'Webhook precisa de atenção'}</h3>
+          </div>
+          <b className={provider?.urlMatches && provider?.receivesMessages && provider?.enabled ? styles.success : styles.warning}>
+            {provider?.urlMatches && provider?.receivesMessages && provider?.enabled ? 'configurado' : 'verificar'}
+          </b>
+        </div>
+        <div className={styles.providerChecks}>
+          {providerChecks.map((check) => (
+            <article key={check.label} className={check.done ? styles.checkDone : styles.checkPending}>
+              <i>{check.done ? '✓' : '!'}</i>
+              <div><strong>{check.label}</strong><small>{check.detail}</small></div>
+            </article>
+          ))}
+        </div>
+        <dl className={styles.urlList}>
+          <div><dt>URL salva na Evolution</dt><dd>{provider?.url || 'Não localizada'}</dd></div>
+          <div><dt>URL esperada</dt><dd>{provider?.expectedUrl || 'Não calculada'}</dd></div>
+          <div><dt>Eventos</dt><dd>{provider?.events?.join(', ') || 'Nenhum evento retornado'}</dd></div>
+        </dl>
+      </section>
 
       <section className={styles.pipeline}>
         {steps.map((step, index) => (
@@ -172,14 +223,14 @@ function DiagnosticContent() {
 
         <section className={styles.card}>
           <header><div><span>Próxima ação</span><h3>{lastTask?.titulo || 'Tarefa não criada'}</h3></div></header>
-          <p>{lastTask?.descricao || 'Use o botão abaixo para transformar a última mensagem recebida em tarefa.'}</p>
-          <button type="button" onClick={reprocessLatestMessage} disabled={processing || !lastMessage}>{processing ? 'Criando tarefa...' : lastTask ? 'Verificar/reaproveitar tarefa' : 'Criar tarefa da última mensagem'}</button>
+          <p>{lastTask?.descricao || 'Use o autoteste para validar o FichaPRO ou transforme a última mensagem real recebida em tarefa.'}</p>
+          <button type="button" onClick={() => runAction('reprocess_latest')} disabled={processing || !lastMessage}>{processing ? 'Criando tarefa...' : lastTask ? 'Verificar/reaproveitar tarefa' : 'Criar tarefa da última mensagem'}</button>
         </section>
       </div>
 
       <section className={styles.help}>
-        <strong>Como interpretar</strong>
-        <p>Sem evento: a Evolution não chamou o webhook. Com evento, mas sem mensagem: o formato recebido não foi reconhecido. Com mensagem, mas sem tarefa: o banco ou o responsável da empresa bloqueou a criação. O botão de reprocessamento mostra o erro exato.</p>
+        <strong>Como interpretar o autoteste</strong>
+        <p>Se o botão “Testar FichaPRO internamente” criar evento, mensagem e tarefa, o banco e o endpoint estão funcionando. Se depois uma mensagem real continuar sem aparecer, o problema está exclusivamente na entrega da Evolution, na instância ou na rede onde ela está hospedada.</p>
       </section>
     </div>
   );
