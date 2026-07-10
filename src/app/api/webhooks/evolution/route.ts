@@ -186,26 +186,37 @@ export async function POST(request: Request) {
       }
     }
 
-    await admin.from('automacao_execucoes').upsert({
-      empresa_id: empresaId,
-      evento_origem: message.fromMe ? 'mensagem_enviada' : 'mensagem_recebida',
-      referencia_externa: externalEventId,
-      status: 'concluida',
-      entrada: {
-        telefone: normalizedPhone,
-        cliente_id: client?.id || null,
-        tipo_mensagem: message.type,
-        evento: normalizedEvent
-      },
-      saida: {
-        conversa_id: conversation.id,
-        cliente_localizado: Boolean(client),
-        tarefa_criada: taskCreated
-      },
-      tentativas: 1,
-      iniciou_em: new Date().toISOString(),
-      concluiu_em: new Date().toISOString()
-    }, { onConflict: 'empresa_id,evento_origem,referencia_externa' });
+    const executionOrigin = message.fromMe ? 'mensagem_enviada' : 'mensagem_recebida';
+    const { data: existingExecution } = await admin
+      .from('automacao_execucoes')
+      .select('id')
+      .eq('empresa_id', empresaId)
+      .eq('evento_origem', executionOrigin)
+      .eq('referencia_externa', externalEventId)
+      .maybeSingle();
+
+    if (!existingExecution) {
+      await admin.from('automacao_execucoes').insert({
+        empresa_id: empresaId,
+        evento_origem: executionOrigin,
+        referencia_externa: externalEventId,
+        status: 'concluida',
+        entrada: {
+          telefone: normalizedPhone,
+          cliente_id: client?.id || null,
+          tipo_mensagem: message.type,
+          evento: normalizedEvent
+        },
+        saida: {
+          conversa_id: conversation.id,
+          cliente_localizado: Boolean(client),
+          tarefa_criada: taskCreated
+        },
+        tentativas: 1,
+        iniciou_em: new Date().toISOString(),
+        concluiu_em: new Date().toISOString()
+      });
+    }
 
     await admin.from('integracoes_empresa').upsert({
       empresa_id: empresaId,
