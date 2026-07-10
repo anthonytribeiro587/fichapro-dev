@@ -44,6 +44,15 @@ function messageType(data: UnknownRecord) {
   return 'texto';
 }
 
+function ignoredRemoteJidReason(remoteJid: string) {
+  const jid = remoteJid.toLowerCase();
+  if (jid.endsWith('@g.us')) return 'grupo';
+  if (jid === 'status@broadcast') return 'status';
+  if (jid.endsWith('@broadcast')) return 'broadcast';
+  if (jid.endsWith('@newsletter')) return 'canal';
+  return null;
+}
+
 function extractMessageData(payload: EvolutionPayload) {
   const data = payload.data || {};
   const raw = data.messages?.[0] || data;
@@ -53,6 +62,8 @@ function extractMessageData(payload: EvolutionPayload) {
   return {
     id: String(key.id || raw.id || data.id || ''),
     phone,
+    remoteJid,
+    ignoredReason: ignoredRemoteJidReason(remoteJid),
     fromMe: Boolean(key.fromMe ?? raw.fromMe ?? data.fromMe),
     name: String(raw.pushName || data.pushName || data.name || ''),
     text: messageText(raw),
@@ -76,7 +87,7 @@ export async function POST(request: Request) {
   try {
     const admin = createAdminServerClient();
     const message = extractMessageData(payload);
-    const externalEventId = message.id || `${normalizedEvent}:${payload.date_time || Date.now()}:${message.phone || 'unknown'}`;
+    const externalEventId = message.id || `${normalizedEvent}:${payload.date_time || Date.now()}:${message.remoteJid || 'unknown'}`;
 
     const { data: duplicated } = await admin
       .from('eventos_webhook')
@@ -99,6 +110,17 @@ export async function POST(request: Request) {
 
     if (eventError) throw new Error(`Não foi possível registrar o evento da Evolution: ${eventError.message}`);
     eventRowId = eventRow?.id || null;
+
+    if (message.ignoredReason) {
+      if (eventRowId) {
+        await admin.from('eventos_webhook').update({
+          status: 'ignorado',
+          erro: `Ignorado automaticamente: ${message.ignoredReason}.`,
+          processado_em: new Date().toISOString()
+        }).eq('id', eventRowId);
+      }
+      return NextResponse.json({ ok: true, ignored: true, reason: message.ignoredReason });
+    }
 
     if (!['MESSAGES_UPSERT', 'SEND_MESSAGE'].includes(normalizedEvent) || !message.phone) {
       if (eventRowId) {
@@ -123,7 +145,7 @@ export async function POST(request: Request) {
         nome_contato: client?.nome || message.name || null,
         status: message.fromMe ? 'aguardando_cliente' : 'aguardando_equipe',
         ultima_mensagem_em: new Date().toISOString(),
-        metadata: { instance: payload.instance || null }
+        metadata: { instance: payload.instance || null, remote_jid: message.remoteJid }
       }, { onConflict: 'empresa_id,telefone' })
       .select('id')
       .single();
@@ -142,7 +164,7 @@ export async function POST(request: Request) {
       conteudo: message.text || (message.type === 'texto' ? null : `[${message.type}]`),
       status: message.fromMe ? 'enviada' : 'recebida',
       enviada_por: message.fromMe ? 'equipe' : 'cliente',
-      metadata: { event: normalizedEvent },
+      metadata: { event: normalizedEvent, remote_jid: message.remoteJid },
       enviada_em: new Date().toISOString()
     }, { onConflict: 'empresa_id,id_externo' });
 
