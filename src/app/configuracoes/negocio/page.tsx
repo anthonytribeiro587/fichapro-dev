@@ -11,6 +11,20 @@ import styles from './page.module.css';
 const defaultModules: ModulosEmpresa = { vendas: true, estoque: true, servicos: false, recorrencia: false, tarefas: true, pagamentos: false, whatsapp: false, ia: false };
 const defaultConfig: ConfiguracoesEmpresa = { nome_exibicao: '', cor_marca: '#8f4f35', termo_cliente: 'Cliente', termo_venda: 'Venda', termo_produto: 'Produto ou serviço', mensagem_assinatura: '' };
 
+type ModuleDefinition = {
+  key: keyof ModulosEmpresa;
+  title: string;
+  description: string;
+  icon: string;
+  premium?: boolean;
+};
+
+type ModuleGroup = {
+  title: string;
+  description: string;
+  items: ModuleDefinition[];
+};
+
 const profiles: Array<{ value: PerfilNegocio; icon: string; title: string; description: string; example: string; modules: Partial<ModulosEmpresa> }> = [
   { value: 'comercio', icon: '□', title: 'Comércio e revenda', description: 'Produtos, estoque, pedidos, parcelas, entregas e recompra.', example: 'Consultoras, roupas, cosméticos e pequenas lojas', modules: { vendas: true, estoque: true, servicos: false, recorrencia: false, tarefas: true } },
   { value: 'servicos', icon: '◇', title: 'Prestação de serviços', description: 'Orçamentos, agenda, execução, cobranças e pós-venda.', example: 'Manutenção, assistência, freelancers e agências', modules: { vendas: true, estoque: false, servicos: true, recorrencia: false, tarefas: true } },
@@ -18,18 +32,18 @@ const profiles: Array<{ value: PerfilNegocio; icon: string; title: string; descr
   { value: 'hibrido', icon: '✦', title: 'Operação híbrida', description: 'Combina produtos, serviços e planos recorrentes na mesma empresa.', example: 'Negócios com venda, instalação e mensalidade', modules: { vendas: true, estoque: true, servicos: true, recorrencia: true, tarefas: true } }
 ];
 
-const moduleGroups = [
+const moduleGroups: ModuleGroup[] = [
   { title: 'Base operacional', description: 'O que a equipe usa para registrar e acompanhar o trabalho.', items: [
-    { key: 'vendas' as const, title: 'Vendas e pedidos', description: 'Pedidos, itens, parcelas e histórico.', icon: '▣' },
-    { key: 'estoque' as const, title: 'Estoque', description: 'Saldo, movimentações, fornecedores e reposição.', icon: '▤' },
-    { key: 'servicos' as const, title: 'Serviços', description: 'Orçamentos, agenda, execução e conclusão.', icon: '◇' },
-    { key: 'recorrencia' as const, title: 'Recorrência', description: 'Planos, assinaturas, vencimentos e renovações.', icon: '↻' },
-    { key: 'tarefas' as const, title: 'Próximas ações', description: 'Fila para entregar, renovar, liberar ou acompanhar.', icon: '✓' }
+    { key: 'vendas', title: 'Vendas e pedidos', description: 'Pedidos, itens, parcelas e histórico.', icon: '▣' },
+    { key: 'estoque', title: 'Estoque', description: 'Saldo, movimentações, fornecedores e reposição.', icon: '▤' },
+    { key: 'servicos', title: 'Serviços', description: 'Orçamentos, agenda, execução e conclusão.', icon: '◇' },
+    { key: 'recorrencia', title: 'Recorrência', description: 'Planos, assinaturas, vencimentos e renovações.', icon: '↻' },
+    { key: 'tarefas', title: 'Próximas ações', description: 'Fila para entregar, renovar, liberar ou acompanhar.', icon: '✓' }
   ]},
   { title: 'Canais e inteligência', description: 'Recursos premium que conectam pagamento, atendimento e automação.', items: [
-    { key: 'pagamentos' as const, title: 'Pagamentos integrados', description: 'Pix individual, webhook e conciliação pelo Mercado Pago.', icon: '₿', premium: true },
-    { key: 'whatsapp' as const, title: 'WhatsApp integrado', description: 'Evolution API, caixa de entrada e mensagens controladas.', icon: 'W', premium: true },
-    { key: 'ia' as const, title: 'Inteligência artificial', description: 'Triagem, contexto, resumos e sugestões de próxima ação.', icon: '✦', premium: true }
+    { key: 'pagamentos', title: 'Pagamentos integrados', description: 'Pix individual, webhook e conciliação pelo Mercado Pago.', icon: '₿', premium: true },
+    { key: 'whatsapp', title: 'WhatsApp integrado', description: 'Evolution API, caixa de entrada e mensagens controladas.', icon: 'W', premium: true },
+    { key: 'ia', title: 'Inteligência artificial', description: 'Triagem, contexto, resumos e sugestões de próxima ação.', icon: '✦', premium: true }
   ]}
 ];
 
