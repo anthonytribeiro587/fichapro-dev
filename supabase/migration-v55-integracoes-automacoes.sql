@@ -9,9 +9,11 @@ alter table public.clientes
 alter table public.tarefas_operacionais
   add column if not exists cobranca_id uuid references public.cobrancas_integradas(id) on delete set null;
 
-create unique index if not exists tarefas_operacionais_cobranca_tipo_unique
-  on public.tarefas_operacionais(cobranca_id, tipo)
-  where cobranca_id is not null;
+-- Uma cobrança pode criar no máximo uma tarefa de cada tipo.
+-- O índice não é parcial para que o PostgREST reconheça a chave no upsert.
+drop index if exists public.tarefas_operacionais_cobranca_tipo_unique;
+create unique index tarefas_operacionais_cobranca_tipo_unique
+  on public.tarefas_operacionais(cobranca_id, tipo);
 
 create table if not exists public.automacoes (
   id uuid primary key default gen_random_uuid(),
@@ -150,7 +152,8 @@ begin
   end loop;
 end $$;
 
--- event webhook pode ser gravado por backend service_role; usuários autenticados apenas consultam sua empresa.
+-- Os webhooks são gravados pelo backend com service_role; usuários autenticados
+-- apenas consultam os registros pertencentes às próprias empresas.
 -- Validação rápida:
 -- select table_name from information_schema.tables where table_schema='public'
 -- and table_name in ('automacoes','automacao_execucoes','eventos_webhook','conversas_whatsapp','mensagens_whatsapp');
