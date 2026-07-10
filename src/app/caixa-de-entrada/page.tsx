@@ -7,7 +7,6 @@ import { Notice } from '@/components/Notice';
 import { initials } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import type { ConversaWhatsapp, Empresa, MensagemWhatsapp } from '@/lib/types';
-import styles from './page.module.css';
 
 type InboxFilter = 'aguardando' | 'todas' | 'resolvidas';
 type ConversationWithPreview = ConversaWhatsapp & { ultima_mensagem?: MensagemWhatsapp | null };
@@ -52,7 +51,7 @@ function InboxContent() {
   const [loadingThread, setLoadingThread] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<string | null>(null);
 
   const authFetch = useCallback(async (url: string, init: RequestInit = {}) => {
     const { data } = await supabase.auth.getSession();
@@ -100,7 +99,7 @@ function InboxContent() {
 
     const rows = (conversationRows || []) as ConversationWithPreview[];
     const ids = rows.map((item) => item.id);
-    let latestByConversation = new Map<string, MensagemWhatsapp>();
+    const latestByConversation = new Map<string, MensagemWhatsapp>();
 
     if (ids.length) {
       const { data: messageRows } = await supabase
@@ -110,7 +109,6 @@ function InboxContent() {
         .in('conversa_id', ids)
         .order('enviada_em', { ascending: false });
 
-      latestByConversation = new Map<string, MensagemWhatsapp>();
       for (const item of (messageRows || []) as MensagemWhatsapp[]) {
         if (!latestByConversation.has(item.conversa_id)) latestByConversation.set(item.conversa_id, item);
       }
@@ -120,15 +118,14 @@ function InboxContent() {
     setConversations(withPreview);
 
     const requested = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversa') : null;
-    const previous = preserveSelection ? selectedId : null;
-    const next = requested && withPreview.some((item) => item.id === requested)
-      ? requested
-      : previous && withPreview.some((item) => item.id === previous)
-        ? previous
-        : withPreview[0]?.id || null;
-    setSelectedId(next);
+    setSelectedId((currentSelected) => {
+      const previous = preserveSelection ? currentSelected : null;
+      if (requested && withPreview.some((item) => item.id === requested)) return requested;
+      if (previous && withPreview.some((item) => item.id === previous)) return previous;
+      return withPreview[0]?.id || null;
+    });
     setLoading(false);
-  }, [selectedId]);
+  }, []);
 
   const loadThread = useCallback(async (conversationId: string | null) => {
     if (!conversationId || !empresa) {
@@ -147,13 +144,16 @@ function InboxContent() {
     setLoadingThread(false);
   }, [empresa]);
 
-  useEffect(() => { loadConversations(false); }, [loadConversations]);
-  useEffect(() => { loadThread(selectedId); }, [loadThread, selectedId]);
+  useEffect(() => { void loadConversations(false); }, [loadConversations]);
+  useEffect(() => { void loadThread(selectedId); }, [loadThread, selectedId]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => loadConversations(true), 12000);
+    const timer = window.setInterval(() => {
+      void loadConversations(true);
+      if (selectedId) void loadThread(selectedId);
+    }, 12000);
     return () => window.clearInterval(timer);
-  }, [loadConversations]);
+  }, [loadConversations, loadThread, selectedId]);
 
   const filteredConversations = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -168,13 +168,14 @@ function InboxContent() {
 
   const selected = conversations.find((item) => item.id === selectedId) || null;
   const waitingCount = conversations.filter((item) => item.status === 'aguardando_equipe').length;
+  const waitingCustomerCount = conversations.filter((item) => item.status === 'aguardando_cliente').length;
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!empresa || !selected || !draft.trim() || sending) return;
     setSending(true);
     setError(null);
-    setMessage(null);
+    setFeedback(null);
     try {
       const response = await authFetch('/api/whatsapp/mensagens', {
         method: 'POST',
@@ -183,9 +184,8 @@ function InboxContent() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || 'Não foi possível enviar a mensagem.');
       setDraft('');
-      setMessage('Mensagem enviada e conversa movida para “Aguardando cliente”.');
-      await loadConversations(true);
-      await loadThread(selected.id);
+      setFeedback('Mensagem enviada. Agora estamos aguardando o cliente.');
+      await Promise.all([loadConversations(true), loadThread(selected.id)]);
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : 'Não foi possível enviar a mensagem.');
     } finally {
@@ -196,6 +196,7 @@ function InboxContent() {
   async function updateConversationStatus(status: ConversaWhatsapp['status']) {
     if (!empresa || !selected) return;
     setError(null);
+    setFeedback(null);
     const { error: updateError } = await supabase
       .from('conversas_whatsapp')
       .update({ status })
@@ -203,14 +204,14 @@ function InboxContent() {
       .eq('id', selected.id);
     if (updateError) setError(updateError.message);
     else {
-      setMessage(status === 'resolvida' ? 'Conversa marcada como resolvida.' : 'Conversa reaberta.');
+      setFeedback(status === 'resolvida' ? 'Conversa marcada como resolvida.' : 'Conversa reaberta para atendimento.');
       await loadConversations(true);
     }
   }
 
   function selectConversation(id: string) {
     setSelectedId(id);
-    setMessage(null);
+    setFeedback(null);
     setError(null);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
@@ -220,62 +221,49 @@ function InboxContent() {
   }
 
   return (
-    <div className={styles.page}>
+    <div className="inbox-page">
       {error && <Notice type="danger">{error}</Notice>}
-      {message && <Notice type="success">{message}</Notice>}
+      {feedback && <Notice type="success">{feedback}</Notice>}
 
-      <section className={styles.summaryBar}>
+      <section className="summary-bar">
         <div>
-          <span>Central de atendimento</span>
+          <span className="eyebrow-local">Central de atendimento</span>
           <h2>Caixa de entrada</h2>
-          <p>Converse com clientes sem misturar atendimento com tarefas de entrega, cobrança ou renovação.</p>
+          <p>Atenda clientes, acompanhe retornos e mantenha as tarefas operacionais em uma fila separada.</p>
         </div>
-        <div className={styles.summaryMetrics}>
-          <article><strong>{waitingCount}</strong><span>precisam de resposta</span></article>
-          <article><strong>{conversations.length}</strong><span>conversas recentes</span></article>
+        <div className="summary-metrics">
+          <article className={waitingCount ? 'attention' : ''}><strong>{waitingCount}</strong><span>precisam de resposta</span></article>
+          <article><strong>{waitingCustomerCount}</strong><span>aguardando cliente</span></article>
         </div>
       </section>
 
-      <section className={styles.inbox}>
-        <aside className={`${styles.conversationPanel} ${selected ? styles.hasSelection : ''}`}>
-          <div className={styles.panelTop}>
-            <div>
-              <strong>Conversas</strong>
-              <small>{waitingCount ? `${waitingCount} aguardando você` : 'Tudo respondido'}</small>
-            </div>
+      <section className="inbox-shell">
+        <aside className={`conversation-panel ${selected ? 'has-selection' : ''}`}>
+          <div className="panel-top">
+            <div><strong>Conversas</strong><small>{waitingCount ? `${waitingCount} aguardando você` : 'Tudo respondido'}</small></div>
             <button type="button" onClick={() => loadConversations(true)} aria-label="Atualizar conversas">↻</button>
           </div>
 
-          <input
-            className={styles.search}
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar nome, telefone ou mensagem"
-          />
+          <label className="search-box"><span>⌕</span><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, telefone ou mensagem" /></label>
 
-          <div className={styles.filters}>
-            <button type="button" className={filter === 'aguardando' ? styles.active : ''} onClick={() => setFilter('aguardando')}>Aguardando</button>
-            <button type="button" className={filter === 'todas' ? styles.active : ''} onClick={() => setFilter('todas')}>Todas</button>
-            <button type="button" className={filter === 'resolvidas' ? styles.active : ''} onClick={() => setFilter('resolvidas')}>Resolvidas</button>
+          <div className="inbox-filters">
+            <button type="button" className={filter === 'aguardando' ? 'active' : ''} onClick={() => setFilter('aguardando')}>Para responder</button>
+            <button type="button" className={filter === 'todas' ? 'active' : ''} onClick={() => setFilter('todas')}>Todas</button>
+            <button type="button" className={filter === 'resolvidas' ? 'active' : ''} onClick={() => setFilter('resolvidas')}>Resolvidas</button>
           </div>
 
-          <div className={styles.conversationList}>
-            {loading && <div className={styles.empty}>Carregando conversas...</div>}
-            {!loading && filteredConversations.length === 0 && <div className={styles.empty}>Nenhuma conversa neste filtro.</div>}
+          <div className="conversation-list">
+            {loading && <div className="empty-state">Carregando conversas...</div>}
+            {!loading && filteredConversations.length === 0 && <div className="empty-state"><strong>Nada por aqui</strong><span>Nenhuma conversa neste filtro.</span></div>}
             {filteredConversations.map((conversation) => {
               const name = conversation.clientes?.nome || conversation.nome_contato || conversation.telefone;
               return (
-                <button
-                  type="button"
-                  key={conversation.id}
-                  className={`${styles.conversationItem} ${selectedId === conversation.id ? styles.selected : ''}`}
-                  onClick={() => selectConversation(conversation.id)}
-                >
-                  <span className={styles.avatar}>{initials(name)}</span>
-                  <span className={styles.conversationCopy}>
-                    <span className={styles.nameLine}><strong>{name}</strong><small>{formatTime(conversation.ultima_mensagem_em)}</small></span>
-                    <span className={styles.preview}>{messagePreview(conversation.ultima_mensagem)}</span>
-                    <span className={`${styles.status} ${styles[conversation.status]}`}>{statusLabel[conversation.status]}</span>
+                <button type="button" key={conversation.id} className={`conversation-item ${selectedId === conversation.id ? 'selected' : ''}`} onClick={() => selectConversation(conversation.id)}>
+                  <span className="avatar">{initials(name)}</span>
+                  <span className="conversation-copy">
+                    <span className="name-line"><strong>{name}</strong><small>{formatTime(conversation.ultima_mensagem_em)}</small></span>
+                    <span className="preview">{messagePreview(conversation.ultima_mensagem)}</span>
+                    <span className={`conversation-status ${conversation.status}`}>{statusLabel[conversation.status]}</span>
                   </span>
                 </button>
               );
@@ -283,64 +271,62 @@ function InboxContent() {
           </div>
         </aside>
 
-        <main className={`${styles.threadPanel} ${selected ? styles.open : ''}`}>
-          {!selected && <div className={styles.threadEmpty}><strong>Escolha uma conversa</strong><p>As mensagens aparecerão aqui.</p></div>}
+        <main className={`thread-panel ${selected ? 'open' : ''}`}>
+          {!selected && <div className="thread-empty"><span>💬</span><strong>Escolha uma conversa</strong><p>O histórico e a caixa de resposta aparecerão aqui.</p></div>}
           {selected && <>
-            <header className={styles.threadHeader}>
-              <button type="button" className={styles.backButton} onClick={() => setSelectedId(null)}>←</button>
-              <span className={styles.avatar}>{initials(selected.clientes?.nome || selected.nome_contato || selected.telefone)}</span>
-              <div>
-                <strong>{selected.clientes?.nome || selected.nome_contato || selected.telefone}</strong>
-                <small>{selected.telefone} · {statusLabel[selected.status]}</small>
-              </div>
-              <div className={styles.threadActions}>
+            <header className="thread-header">
+              <button type="button" className="back-button" onClick={() => setSelectedId(null)} aria-label="Voltar para conversas">←</button>
+              <span className="avatar">{initials(selected.clientes?.nome || selected.nome_contato || selected.telefone)}</span>
+              <div className="thread-person"><strong>{selected.clientes?.nome || selected.nome_contato || selected.telefone}</strong><small>{selected.telefone} · {statusLabel[selected.status]}</small></div>
+              <div className="thread-actions">
                 {selected.status === 'resolvida'
                   ? <button type="button" onClick={() => updateConversationStatus('aguardando_equipe')}>Reabrir</button>
                   : <button type="button" onClick={() => updateConversationStatus('resolvida')}>Resolver</button>}
               </div>
             </header>
 
-            <div className={styles.messages}>
-              {loadingThread && <div className={styles.threadEmpty}>Carregando mensagens...</div>}
-              {!loadingThread && messages.length === 0 && <div className={styles.threadEmpty}>Nenhuma mensagem registrada.</div>}
+            <div className="messages">
+              {loadingThread && <div className="thread-empty compact">Carregando mensagens...</div>}
+              {!loadingThread && messages.length === 0 && <div className="thread-empty compact">Nenhuma mensagem registrada.</div>}
               {messages.map((item) => (
-                <article key={item.id} className={`${styles.bubbleRow} ${item.direcao === 'saida' ? styles.outgoing : styles.incoming}`}>
-                  <div className={styles.bubble}>
-                    <p>{item.conteudo || `[${item.tipo}]`}</p>
-                    <small>{formatTime(item.enviada_em)}{item.direcao === 'saida' ? ` · ${item.status}` : ''}</small>
-                  </div>
+                <article key={item.id} className={`bubble-row ${item.direcao === 'saida' ? 'outgoing' : 'incoming'}`}>
+                  <div className="bubble"><p>{item.conteudo || `[${item.tipo}]`}</p><small>{formatTime(item.enviada_em)}{item.direcao === 'saida' ? ` · ${item.status}` : ''}</small></div>
                 </article>
               ))}
             </div>
 
-            <form className={styles.composer} onSubmit={sendMessage}>
-              <textarea
-                rows={2}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                placeholder="Digite uma resposta..."
-                disabled={sending}
-              />
-              <button type="submit" disabled={sending || !draft.trim()}>{sending ? 'Enviando...' : 'Enviar'}</button>
+            <form className="composer" onSubmit={sendMessage}>
+              <textarea rows={2} value={draft} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') event.currentTarget.form?.requestSubmit(); }} placeholder="Digite uma resposta..." disabled={sending} />
+              <div><small>Ctrl + Enter para enviar</small><button type="submit" disabled={sending || !draft.trim()}>{sending ? 'Enviando...' : 'Enviar mensagem'}</button></div>
             </form>
           </>}
         </main>
 
-        <aside className={styles.contactPanel}>
-          {!selected && <div className={styles.contactEmpty}>Selecione uma conversa para ver o cliente.</div>}
+        <aside className="contact-panel">
+          {!selected && <div className="contact-empty">Selecione uma conversa para ver o contexto do cliente.</div>}
           {selected && <>
-            <span className={styles.contactAvatar}>{initials(selected.clientes?.nome || selected.nome_contato || selected.telefone)}</span>
+            <span className="contact-avatar">{initials(selected.clientes?.nome || selected.nome_contato || selected.telefone)}</span>
             <h3>{selected.clientes?.nome || selected.nome_contato || 'Contato não cadastrado'}</h3>
             <p>{selected.telefone}</p>
-            <div className={styles.contactStatus}><span>Situação</span><strong>{statusLabel[selected.status]}</strong></div>
+            <div className="contact-facts">
+              <div><span>Situação</span><strong>{statusLabel[selected.status]}</strong></div>
+              <div><span>Cadastro</span><strong>{selected.cliente_id ? selected.clientes?.categoria || 'Cliente' : 'Novo contato'}</strong></div>
+            </div>
             {selected.cliente_id
-              ? <Link href={`/clientes/${selected.cliente_id}`}>Abrir ficha do cliente</Link>
-              : <Link href={`/clientes?novo=1&telefone=${encodeURIComponent(selected.telefone)}`}>Cadastrar como cliente</Link>}
-            <Link href={`/operacao?cliente=${selected.cliente_id || ''}`}>Criar próxima ação</Link>
-            <small>Responder nesta tela conclui automaticamente a tarefa “Responder cliente”.</small>
+              ? <Link className="primary-link" href={`/clientes/${selected.cliente_id}`}>Abrir ficha do cliente</Link>
+              : <Link className="primary-link" href={`/clientes?novo=1&telefone=${encodeURIComponent(selected.telefone)}`}>Cadastrar como cliente</Link>}
+            <Link className="secondary-link" href={`/operacao?cliente=${selected.cliente_id || ''}`}>Criar ação operacional</Link>
+            <small className="helper">Ao responder, a tarefa antiga de “Responder cliente” é concluída automaticamente.</small>
           </>}
         </aside>
       </section>
+
+      <style jsx>{`
+        .inbox-page{display:grid;gap:16px;min-width:0}.summary-bar{display:flex;align-items:center;justify-content:space-between;gap:24px;padding:20px 24px;border:1px solid rgba(112,80,62,.1);border-radius:22px;background:rgba(255,255,255,.84);box-shadow:0 18px 44px rgba(67,46,32,.045)}.eyebrow-local{display:block;color:#9a5639;font-size:.67rem;font-weight:850;letter-spacing:.14em;text-transform:uppercase}.summary-bar h2{margin:4px 0 7px;font-size:1.55rem;letter-spacing:-.04em}.summary-bar p{margin:0;color:#7d6d64;font-size:.86rem}.summary-metrics{display:flex;gap:10px}.summary-metrics article{min-width:132px;padding:13px 15px;border-radius:16px;background:#f8f1ed}.summary-metrics article.attention{background:#fff0e5}.summary-metrics strong{display:block;font-size:1.28rem}.summary-metrics span{color:#8a776d;font-size:.68rem}.inbox-shell{display:grid;grid-template-columns:minmax(270px,.72fr) minmax(420px,1.45fr) minmax(230px,.62fr);min-height:610px;border:1px solid rgba(112,80,62,.11);border-radius:24px;background:#fff;box-shadow:0 18px 46px rgba(67,46,32,.055);overflow:hidden}.conversation-panel,.contact-panel{min-width:0;background:#fffdfb}.conversation-panel{display:flex;flex-direction:column;border-right:1px solid #eee2dc}.panel-top{display:flex;align-items:center;justify-content:space-between;padding:18px 18px 12px}.panel-top strong{display:block;font-size:.94rem}.panel-top small{display:block;margin-top:3px;color:#947f74;font-size:.68rem}.panel-top button{width:34px;height:34px;border:1px solid #e3d5cd;border-radius:11px;background:#fff;color:#754331;font-size:1rem}.search-box{display:flex;align-items:center;gap:8px;margin:0 14px 10px;padding:0 12px;border:1px solid #e2d5cd;border-radius:13px;background:#fff}.search-box span{color:#a38d82}.search-box input{width:100%;height:42px;border:0;background:transparent;outline:0;font-size:.76rem}.inbox-filters{display:flex;gap:5px;padding:0 14px 12px}.inbox-filters button{flex:1;min-height:34px;border:0;border-radius:10px;background:#f6efeb;color:#806b61;font-size:.66rem;font-weight:800}.inbox-filters button.active{background:#754331;color:#fff}.conversation-list{display:grid;align-content:start;overflow:auto}.conversation-item{display:flex;width:100%;gap:11px;padding:14px 15px;border:0;border-top:1px solid #f2e9e4;background:transparent;text-align:left;cursor:pointer}.conversation-item:hover{background:#fff8f4}.conversation-item.selected{background:#faeee7;box-shadow:inset 3px 0 #a65738}.avatar{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;border-radius:13px;background:#efded5;color:#7b4835;font-size:.68rem;font-weight:900}.conversation-copy{display:grid;min-width:0;flex:1;gap:4px}.name-line{display:flex;justify-content:space-between;gap:8px}.name-line strong{overflow:hidden;color:#33251f;font-size:.76rem;text-overflow:ellipsis;white-space:nowrap}.name-line small{color:#9b887e;font-size:.6rem}.preview{overflow:hidden;color:#7d6c63;font-size:.68rem;text-overflow:ellipsis;white-space:nowrap}.conversation-status{justify-self:start;padding:4px 7px;border-radius:999px;background:#f0e9e5;color:#785e52;font-size:.56rem;font-weight:850}.conversation-status.aguardando_equipe{background:#fff0d9;color:#996211}.conversation-status.aguardando_cliente{background:#e9f0fb;color:#3c6596}.conversation-status.resolvida{background:#e3f3e8;color:#2b7b4a}.empty-state{display:grid;gap:5px;margin:16px;padding:24px;border:1px dashed #dccdc5;border-radius:15px;color:#8d7b72;text-align:center;font-size:.75rem}.thread-panel{display:flex;min-width:0;flex-direction:column;background:linear-gradient(180deg,#fffaf7 0%,#fbf5f1 100%)}.thread-header{display:flex;align-items:center;gap:11px;padding:14px 18px;border-bottom:1px solid #eadfd9;background:rgba(255,255,255,.9)}.thread-person{display:grid;min-width:0;flex:1}.thread-person strong{overflow:hidden;font-size:.82rem;text-overflow:ellipsis;white-space:nowrap}.thread-person small{margin-top:3px;color:#8e7c72;font-size:.64rem}.thread-actions button,.back-button{min-height:35px;padding:0 12px;border:1px solid #d9c8be;border-radius:10px;background:#fff;color:#704738;font-weight:800;font-size:.68rem}.back-button{display:none;padding:0;width:36px}.messages{display:flex;flex:1;flex-direction:column;gap:8px;overflow:auto;padding:22px}.bubble-row{display:flex}.bubble-row.outgoing{justify-content:flex-end}.bubble{max-width:min(76%,620px);padding:10px 12px;border:1px solid #e6d8d0;border-radius:15px 15px 15px 4px;background:#fff;box-shadow:0 5px 16px rgba(60,40,30,.035)}.outgoing .bubble{border-color:#cde3d6;border-radius:15px 15px 4px 15px;background:#eaf6ef}.bubble p{margin:0;color:#3b2d27;font-size:.77rem;line-height:1.5;white-space:pre-wrap}.bubble small{display:block;margin-top:5px;color:#8c7c73;font-size:.58rem;text-align:right}.composer{display:grid;gap:9px;padding:14px 16px;border-top:1px solid #e7dbd4;background:#fff}.composer textarea{width:100%;min-height:70px;resize:none;border:1px solid #dccdc4;border-radius:14px;padding:11px 12px;outline:0;font:inherit;font-size:.78rem}.composer textarea:focus{border-color:#a66045;box-shadow:0 0 0 3px rgba(166,96,69,.1)}.composer>div{display:flex;align-items:center;justify-content:space-between;gap:10px}.composer small{color:#9a887e;font-size:.6rem}.composer button{min-height:38px;padding:0 16px;border:0;border-radius:11px;background:#754331;color:#fff;font-size:.72rem;font-weight:850}.composer button:disabled{opacity:.5}.thread-empty{display:grid;place-items:center;align-content:center;flex:1;gap:8px;min-height:280px;color:#8c796e;text-align:center}.thread-empty>span{font-size:2rem}.thread-empty strong{color:#49352d}.thread-empty p{margin:0;font-size:.75rem}.thread-empty.compact{min-height:120px}.contact-panel{padding:22px;border-left:1px solid #eee2dc;text-align:center}.contact-avatar{display:grid;place-items:center;width:58px;height:58px;margin:4px auto 12px;border-radius:19px;background:#efdcd1;color:#78442f;font-weight:900}.contact-panel h3{margin:0;color:#33241f;font-size:1rem}.contact-panel>p{margin:5px 0 18px;color:#8d7b72;font-size:.72rem}.contact-facts{display:grid;gap:8px;margin-bottom:16px;text-align:left}.contact-facts div{display:flex;justify-content:space-between;gap:10px;padding:10px 11px;border-radius:12px;background:#f8f2ee}.contact-facts span{color:#8b7970;font-size:.64rem}.contact-facts strong{font-size:.68rem}.primary-link,.secondary-link{display:grid;place-items:center;min-height:40px;margin-top:8px;border-radius:12px;text-decoration:none;font-size:.7rem;font-weight:850}.primary-link{background:#754331;color:#fff}.secondary-link{border:1px solid #d9c8be;color:#704738}.helper{display:block;margin-top:16px;color:#98867c;font-size:.62rem;line-height:1.5}.contact-empty{display:grid;min-height:220px;place-items:center;color:#96847a;font-size:.74rem}.back-button{flex:0 0 36px}
+        @media(max-width:1180px){.inbox-shell{grid-template-columns:minmax(260px,.78fr) minmax(420px,1.4fr)}.contact-panel{display:none}}
+        @media(max-width:820px){.summary-bar{align-items:flex-start;flex-direction:column}.summary-metrics{width:100%}.summary-metrics article{min-width:0;flex:1}.inbox-shell{display:block;min-height:calc(100dvh - 250px)}.conversation-panel{min-height:540px;border-right:0}.conversation-panel.has-selection{display:none}.thread-panel{display:none;min-height:540px}.thread-panel.open{display:flex}.back-button{display:inline-grid;place-items:center}.messages{min-height:330px;padding:16px}.bubble{max-width:88%}}
+        @media(max-width:560px){.summary-bar{padding:17px}.summary-bar h2{font-size:1.25rem}.summary-bar p{font-size:.76rem}.summary-metrics article{padding:11px}.inbox-shell{border-radius:18px}.thread-header{padding:11px}.composer>div{align-items:stretch;flex-direction:column}.composer button{width:100%}}
+      `}</style>
     </div>
   );
 }
