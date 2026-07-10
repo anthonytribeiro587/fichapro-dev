@@ -271,7 +271,23 @@ export type ConversaWhatsapp = {
   metadata?: Record<string, unknown>;
   created_at: string;
   updated_at: string;
-  clientes?: Pick<Cliente, 'id' | 'nome' | 'telefone'>;
+  clientes?: Pick<Cliente, 'id' | 'nome' | 'telefone' | 'email' | 'categoria'>;
+};
+
+export type MensagemWhatsapp = {
+  id: string;
+  empresa_id: string;
+  conversa_id: string;
+  cliente_id?: string | null;
+  id_externo?: string | null;
+  direcao: 'entrada' | 'saida';
+  tipo: string;
+  conteudo?: string | null;
+  status: string;
+  enviada_por: string;
+  metadata?: Record<string, unknown>;
+  enviada_em: string;
+  created_at: string;
 };
 
 export type HistoricoCliente = {
