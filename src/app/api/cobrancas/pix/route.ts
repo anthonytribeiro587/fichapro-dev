@@ -1,6 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { createPixOrder, extractPixData, mercadoPagoErrorMessage } from '@/lib/mercadopago';
+import {
+  createPixOrder,
+  extractPixData,
+  isMercadoPagoTestAccount,
+  mercadoPagoErrorMessage,
+  testMercadoPagoConnection
+} from '@/lib/mercadopago';
 import { isAuthError, requireAuthenticatedUser } from '@/lib/server-auth';
 
 export const runtime = 'nodejs';
@@ -45,7 +51,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'Cadastre um e-mail válido para o cliente antes de gerar o Pix.' }, { status: 400 });
     }
 
+    const account = await testMercadoPagoConnection();
+    const testMode = isMercadoPagoTestAccount(account);
     const idempotencyKey = body?.chave_idempotencia?.trim() || randomUUID();
+
     const { data: existing } = await supabase
       .from('cobrancas_integradas')
       .select('*')
@@ -53,14 +62,17 @@ export async function POST(request: Request) {
       .eq('chave_idempotencia', idempotencyKey)
       .maybeSingle();
 
-    if (existing) return NextResponse.json({ ok: true, reused: true, cobranca: existing });
+    if (existing) {
+      return NextResponse.json({ ok: true, reused: true, test_mode: testMode, cobranca: existing });
+    }
 
     const reference = `fichapro-${empresaId.slice(0, 8)}-${randomUUID()}`;
     const order = await createPixOrder({
       amount,
       externalReference: reference,
       payerEmail,
-      idempotencyKey
+      idempotencyKey,
+      testMode
     });
     const pix = extractPixData(order);
 
@@ -87,7 +99,9 @@ export async function POST(request: Request) {
           payment_id: pix.paymentId,
           status_original: pix.status,
           status_detail: pix.statusDetail,
-          payer_email: payerEmail
+          payer_email: payerEmail,
+          ambiente_teste: testMode,
+          conta_mercado_pago: account.nickname || account.email || null
         }
       })
       .select('*')
@@ -102,7 +116,15 @@ export async function POST(request: Request) {
       }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true, reused: false, cobranca });
+    return NextResponse.json({
+      ok: true,
+      reused: false,
+      test_mode: testMode,
+      cobranca,
+      message: testMode
+        ? 'Order de teste criada. O Mercado Pago simulará a aprovação automaticamente.'
+        : 'Pix criado com segurança e vinculado ao cliente.'
+    });
   } catch (error) {
     if (isAuthError(error)) return NextResponse.json({ ok: false, error: 'Sessão inválida.' }, { status: 401 });
     return NextResponse.json({ ok: false, error: mercadoPagoErrorMessage(error) }, { status: 502 });
