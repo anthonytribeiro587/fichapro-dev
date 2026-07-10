@@ -90,6 +90,7 @@ export async function POST(request: Request) {
       }
     }).eq('id', charge.id);
 
+    let taskCreated = false;
     if (normalizedStatus === 'pago') {
       if (charge.parcela_id) {
         await admin.from('parcelas').update({
@@ -104,7 +105,7 @@ export async function POST(request: Request) {
         ? `Renovar serviço de ${charge.clientes?.nome || 'cliente'}`
         : `Preparar entrega para ${charge.clientes?.nome || 'cliente'}`;
 
-      await admin.from('tarefas_operacionais').upsert({
+      const { error: taskError } = await admin.from('tarefas_operacionais').upsert({
         user_id: charge.user_id,
         empresa_id: charge.empresa_id,
         cliente_id: charge.cliente_id,
@@ -120,6 +121,7 @@ export async function POST(request: Request) {
         data_limite: new Date().toISOString().slice(0, 10),
         metadata: { order_id: dataId, pagamento_confirmado: true }
       }, { onConflict: 'cobranca_id,tipo' });
+      taskCreated = !taskError;
 
       const adminPhone = process.env.WHATSAPP_ADMIN_NUMBER;
       if (adminPhone) {
@@ -131,6 +133,38 @@ export async function POST(request: Request) {
       }
     }
 
+    const executionOrigin = normalizedStatus === 'pago' ? 'pagamento_confirmado' : 'pagamento_atualizado';
+    const { data: existingExecution } = await admin
+      .from('automacao_execucoes')
+      .select('id')
+      .eq('empresa_id', charge.empresa_id)
+      .eq('evento_origem', executionOrigin)
+      .eq('referencia_externa', eventId)
+      .maybeSingle();
+
+    if (!existingExecution) {
+      await admin.from('automacao_execucoes').insert({
+        empresa_id: charge.empresa_id,
+        evento_origem: executionOrigin,
+        referencia_externa: eventId,
+        status: 'concluida',
+        entrada: {
+          order_id: dataId,
+          cobranca_id: charge.id,
+          cliente_id: charge.cliente_id,
+          status_recebido: normalizedStatus
+        },
+        saida: {
+          parcela_baixada: Boolean(charge.parcela_id && normalizedStatus === 'pago'),
+          tarefa_criada: taskCreated,
+          notificacao_admin_solicitada: Boolean(process.env.WHATSAPP_ADMIN_NUMBER && normalizedStatus === 'pago')
+        },
+        tentativas: 1,
+        iniciou_em: new Date().toISOString(),
+        concluiu_em: new Date().toISOString()
+      });
+    }
+
     if (eventRow?.id) {
       await admin.from('eventos_webhook').update({
         empresa_id: charge.empresa_id,
@@ -139,7 +173,7 @@ export async function POST(request: Request) {
       }).eq('id', eventRow.id);
     }
 
-    return NextResponse.json({ ok: true, status: normalizedStatus });
+    return NextResponse.json({ ok: true, status: normalizedStatus, taskCreated });
   } catch (error) {
     return NextResponse.json({
       ok: false,
