@@ -2,6 +2,13 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 const API_BASE = (process.env.MERCADO_PAGO_API_URL || 'https://api.mercadopago.com').replace(/\/$/, '');
 
+export type MercadoPagoAccount = {
+  id?: number;
+  nickname?: string;
+  email?: string;
+  site_id?: string;
+};
+
 export type MercadoPagoOrder = {
   id: string;
   external_reference?: string;
@@ -33,13 +40,31 @@ export function getMercadoPagoConfig() {
   };
 }
 
-function mercadoPagoApiMessage(data: any, status: number) {
-  const base = data?.message || data?.error || `Mercado Pago respondeu com status ${status}.`;
-  const causes = Array.isArray(data?.cause)
-    ? data.cause.map((item: any) => item?.description || item?.code).filter(Boolean)
-    : [];
-  const details = [data?.status, data?.status_detail, ...causes].filter(Boolean);
-  return details.length ? `${base} — ${details.join(' | ')}` : base;
+function flattenProviderMessages(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string' || typeof value === 'number') return [String(value)];
+  if (Array.isArray(value)) return value.flatMap(flattenProviderMessages);
+  if (typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    return [
+      ...flattenProviderMessages(object.message),
+      ...flattenProviderMessages(object.error),
+      ...flattenProviderMessages(object.description),
+      ...flattenProviderMessages(object.code),
+      ...flattenProviderMessages(object.cause),
+      ...flattenProviderMessages(object.causes),
+      ...flattenProviderMessages(object.errors),
+      ...flattenProviderMessages(object.details)
+    ];
+  }
+  return [];
+}
+
+function mercadoPagoApiMessage(data: unknown, status: number) {
+  const messages = [...new Set(flattenProviderMessages(data).filter(Boolean))];
+  return messages.length
+    ? `Mercado Pago (${status}): ${messages.join(' | ')}`
+    : `Mercado Pago respondeu com status ${status}.`;
 }
 
 export async function mercadoPagoRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -65,7 +90,13 @@ export async function mercadoPagoRequest<T>(path: string, init: RequestInit = {}
 }
 
 export async function testMercadoPagoConnection() {
-  return mercadoPagoRequest<{ id?: number; nickname?: string; email?: string; site_id?: string }>('/users/me');
+  return mercadoPagoRequest<MercadoPagoAccount>('/users/me');
+}
+
+export function isMercadoPagoTestAccount(account: MercadoPagoAccount | null | undefined) {
+  const nickname = String(account?.nickname || '').toUpperCase();
+  const email = String(account?.email || '').toLowerCase();
+  return nickname.startsWith('TESTUSER') || email.endsWith('@testuser.com');
 }
 
 export async function createPixOrder(input: {
@@ -74,22 +105,26 @@ export async function createPixOrder(input: {
   payerEmail: string;
   idempotencyKey: string;
   expirationTime?: string;
+  testMode?: boolean;
 }) {
+  const payer = input.testMode
+    ? { email: 'test_user_br@testuser.com', first_name: 'APRO' }
+    : { email: input.payerEmail };
+
+  const payment: Record<string, unknown> = {
+    amount: input.amount.toFixed(2),
+    payment_method: { id: 'pix', type: 'bank_transfer' }
+  };
+
+  if (!input.testMode) payment.expiration_time = input.expirationTime || 'P1D';
+
   const body = {
     type: 'online',
     total_amount: input.amount.toFixed(2),
     external_reference: input.externalReference,
     processing_mode: 'automatic',
-    transactions: {
-      payments: [
-        {
-          amount: input.amount.toFixed(2),
-          payment_method: { id: 'pix', type: 'bank_transfer' },
-          expiration_time: input.expirationTime || 'P1D'
-        }
-      ]
-    },
-    payer: { email: input.payerEmail }
+    transactions: { payments: [payment] },
+    payer
   };
 
   return mercadoPagoRequest<MercadoPagoOrder>('/v1/orders', {
