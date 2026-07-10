@@ -10,6 +10,14 @@ class EvolutionRequestError extends Error {
   }
 }
 
+type EvolutionMediaInput = {
+  mediaType: 'image' | 'video' | 'document';
+  mimeType: string;
+  mediaUrl: string;
+  fileName: string;
+  caption?: string;
+};
+
 function collectMessages(value: unknown): string[] {
   if (!value) return [];
   if (typeof value === 'string' || typeof value === 'number') return [String(value)];
@@ -69,7 +77,7 @@ export async function setEvolutionWebhook(webhookUrl: string) {
     enabled: true,
     url: webhookUrl,
     webhook_by_events: false,
-    webhook_base64: false,
+    webhook_base64: true,
     events: webhookEvents
   };
 
@@ -77,13 +85,10 @@ export async function setEvolutionWebhook(webhookUrl: string) {
     enabled: true,
     url: webhookUrl,
     webhookByEvents: false,
-    webhookBase64: false,
+    webhookBase64: true,
     events: webhookEvents
   };
 
-  // Evolution v2 installations differ slightly by patch/version. The first
-  // payload follows the current official documentation. The remaining forms
-  // preserve compatibility with older v2 builds.
   const attempts: Array<Record<string, unknown>> = [
     officialPayload,
     { webhook: officialPayload },
@@ -128,6 +133,56 @@ export async function sendEvolutionText(phone: string, message: string) {
         delay: 700,
         linkPreview: false
       })
+    });
+  }
+}
+
+export async function sendEvolutionMedia(phone: string, input: EvolutionMediaInput) {
+  const { instance } = getEvolutionConfig();
+  if (!instance) throw new Error('EVOLUTION_NOT_CONFIGURED');
+  const number = normalizeBrazilianWhatsappNumber(phone);
+  if (!number) throw new Error('INVALID_PHONE');
+
+  const payload = {
+    number,
+    mediatype: input.mediaType,
+    mimetype: input.mimeType,
+    caption: input.caption || '',
+    media: input.mediaUrl,
+    fileName: input.fileName,
+    delay: 700
+  };
+
+  try {
+    return await evolutionRequest<Record<string, unknown>>(`/message/sendMedia/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    if (!(error instanceof EvolutionRequestError) || ![400, 404, 422].includes(error.status)) throw error;
+    return evolutionRequest<Record<string, unknown>>(`/message/sendMedia/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ number, mediaMessage: payload, delay: 700 })
+    });
+  }
+}
+
+export async function sendEvolutionAudio(phone: string, mediaUrl: string) {
+  const { instance } = getEvolutionConfig();
+  if (!instance) throw new Error('EVOLUTION_NOT_CONFIGURED');
+  const number = normalizeBrazilianWhatsappNumber(phone);
+  if (!number) throw new Error('INVALID_PHONE');
+
+  try {
+    return await evolutionRequest<Record<string, unknown>>(`/message/sendWhatsAppAudio/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ number, audio: mediaUrl, delay: 700, encoding: true })
+    });
+  } catch (error) {
+    if (!(error instanceof EvolutionRequestError) || ![400, 404, 422].includes(error.status)) throw error;
+    return evolutionRequest<Record<string, unknown>>(`/message/sendWhatsAppAudio/${encodeURIComponent(instance)}`, {
+      method: 'POST',
+      body: JSON.stringify({ number, audioMessage: { audio: mediaUrl }, delay: 700 })
     });
   }
 }
