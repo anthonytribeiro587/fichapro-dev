@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppShell } from '@/components/AppShell';
 import { Notice } from '@/components/Notice';
 import { formatCurrency, formatDate, todayISO } from '@/lib/format';
@@ -9,6 +9,8 @@ import type { CobrancaIntegrada, Cliente, Empresa } from '@/lib/types';
 import styles from './page.module.css';
 
 type ChargeForm = { cliente_id: string; valor: string; vencimento: string; descricao: string; payer_email: string };
+type MercadoPagoEnvironment = 'test' | 'production' | 'unknown';
+
 const initialForm: ChargeForm = { cliente_id: '', valor: '', vencimento: todayISO(), descricao: 'Cobrança FichaPRO', payer_email: '' };
 
 export default function PagamentosPage() {
@@ -27,6 +29,20 @@ function PagamentosContent() {
   const [filter, setFilter] = useState<'todas' | 'pendente' | 'pago'>('todas');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [panelError, setPanelError] = useState<string | null>(null);
+  const [panelMessage, setPanelMessage] = useState<string | null>(null);
+  const [mpEnvironment, setMpEnvironment] = useState<MercadoPagoEnvironment>('unknown');
+  const panelRef = useRef<HTMLElement | null>(null);
+
+  const authenticatedFetch = useCallback(async (url: string, init: RequestInit = {}) => {
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    if (!token) throw new Error('Sua sessão expirou. Entre novamente.');
+    return fetch(url, {
+      ...init,
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(init.headers || {}) }
+    });
+  }, []);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -49,7 +65,17 @@ function PagamentosContent() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  const loadMercadoPagoEnvironment = useCallback(async () => {
+    try {
+      const response = await authenticatedFetch('/api/integracoes/mercadopago/status');
+      const payload = await response.json().catch(() => ({}));
+      if (response.ok) setMpEnvironment(payload.environment === 'test' ? 'test' : 'production');
+    } catch {
+      setMpEnvironment('unknown');
+    }
+  }, [authenticatedFetch]);
+
+  useEffect(() => { loadData(); loadMercadoPagoEnvironment(); }, [loadData, loadMercadoPagoEnvironment]);
 
   const summary = useMemo(() => {
     const pending = charges.filter((item) => item.status === 'pendente');
@@ -66,45 +92,66 @@ function PagamentosContent() {
 
   function selectClient(clientId: string) {
     const client = clientes.find((item) => item.id === clientId);
+    setPanelError(null);
+    setPanelMessage(null);
     setForm((current) => ({ ...current, cliente_id: clientId, payer_email: client?.email || '' }));
   }
 
   async function createCharge(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!empresa) return;
-    setSaving(true);
-    setError(null);
-    setMessage(null);
-    setGenerated(null);
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) {
-      setSaving(false);
-      setError('Sua sessão expirou. Entre novamente.');
+    if (!empresa || saving) return;
+
+    const amount = Number(form.valor.replace(',', '.'));
+    if (!form.cliente_id) {
+      setPanelError('Selecione o cliente da cobrança.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setPanelError('Informe um valor maior que zero.');
       return;
     }
 
-    const response = await fetch('/api/cobrancas/pix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        empresa_id: empresa.id,
-        cliente_id: form.cliente_id,
-        valor: Number(form.valor.replace(',', '.')),
-        vencimento: form.vencimento,
-        descricao: form.descricao,
-        payer_email: form.payer_email
-      })
-    });
-    const payload = await response.json().catch(() => ({}));
-    setSaving(false);
-    if (!response.ok) {
-      setError(payload.error || 'Não foi possível gerar o Pix.');
-      return;
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    setPanelError(null);
+    setPanelMessage('Conectando ao Mercado Pago e criando o Pix...');
+    setGenerated(null);
+
+    try {
+      const response = await authenticatedFetch('/api/cobrancas/pix', {
+        method: 'POST',
+        body: JSON.stringify({
+          empresa_id: empresa.id,
+          cliente_id: form.cliente_id,
+          valor: amount,
+          vencimento: form.vencimento,
+          descricao: form.descricao,
+          payer_email: form.payer_email
+        })
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const details = payload.details ? ` Detalhes: ${payload.details}` : '';
+        setPanelMessage(null);
+        setPanelError(`${payload.error || 'Não foi possível gerar o Pix.'}${details}`);
+        panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        return;
+      }
+
+      setGenerated(payload.cobranca as CobrancaIntegrada);
+      setPanelError(null);
+      setPanelMessage(payload.reused ? 'Cobrança existente recuperada com segurança.' : 'Pix gerado e vinculado ao cliente.');
+      await loadData();
+      panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (requestError) {
+      setPanelMessage(null);
+      setPanelError(requestError instanceof Error ? requestError.message : 'Falha de comunicação ao gerar o Pix.');
+      panelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } finally {
+      setSaving(false);
     }
-    setGenerated(payload.cobranca as CobrancaIntegrada);
-    setMessage(payload.reused ? 'Cobrança existente recuperada com segurança.' : 'Pix gerado e vinculado ao cliente.');
-    await loadData();
   }
 
   async function copyPix(code?: string | null) {
@@ -145,9 +192,14 @@ function PagamentosContent() {
           </div>
         </section>
 
-        <aside className={styles.createPanel}>
+        <aside className={styles.createPanel} ref={panelRef}>
           <span className={styles.kicker}>Nova cobrança</span><h3>Gerar Pix individual</h3><p>O e-mail é exigido pelo Mercado Pago. O cliente receberá a cobrança pelo canal que você escolher.</p>
-          <form onSubmit={createCharge}>
+
+          {mpEnvironment === 'test' && <Notice type="danger">Credencial de teste conectada. Ela valida a integração, mas não representa sua conta real. Para gerar e receber um Pix real, troque o Access Token pela credencial de produção.</Notice>}
+          {panelError && <Notice type="danger">{panelError}</Notice>}
+          {panelMessage && <Notice type="success">{panelMessage}</Notice>}
+
+          <form onSubmit={createCharge} noValidate>
             <label>Cliente<select required value={form.cliente_id} onChange={(event) => selectClient(event.target.value)}><option value="">Selecione o cliente</option>{clientes.map((client) => <option value={client.id} key={client.id}>{client.nome}</option>)}</select></label>
             <div className={styles.formGrid}><label>Valor<input required inputMode="decimal" placeholder="0,00" value={form.valor} onChange={(event) => setForm((current) => ({ ...current, valor: event.target.value }))} /></label><label>Vencimento<input required type="date" value={form.vencimento} onChange={(event) => setForm((current) => ({ ...current, vencimento: event.target.value }))} /></label></div>
             <label>E-mail do pagador<input required type="email" placeholder="cliente@email.com" value={form.payer_email} onChange={(event) => setForm((current) => ({ ...current, payer_email: event.target.value }))} /></label>
@@ -158,7 +210,7 @@ function PagamentosContent() {
           {generated && <div className={styles.generated}>
             <div className={styles.generatedHead}><span>Pix criado</span><strong>{formatCurrency(generated.valor)}</strong></div>
             {generated.qr_code_base64 && <img src={`data:image/png;base64,${generated.qr_code_base64}`} alt="QR Code Pix" />}
-            <button type="button" onClick={() => copyPix(generated.pix_copia_cola)}>{copied ? 'Código copiado ✓' : 'Copiar Pix Copia e Cola'}</button>
+            {generated.pix_copia_cola ? <button type="button" onClick={() => copyPix(generated.pix_copia_cola)}>{copied ? 'Código copiado ✓' : 'Copiar Pix Copia e Cola'}</button> : <Notice type="danger">O Mercado Pago criou a cobrança, mas não devolveu o código Pix. Confira se a credencial é de produção.</Notice>}
             {generated.link_pagamento && <a href={generated.link_pagamento} target="_blank" rel="noreferrer">Abrir página de pagamento</a>}
           </div>}
         </aside>
