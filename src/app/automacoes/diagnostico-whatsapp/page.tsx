@@ -55,7 +55,7 @@ function DiagnosticContent() {
     setMessage(null);
 
     try {
-      let currentCompanyId = companyId || empresaId;
+      let currentCompanyId: string | null = companyId || empresaId;
       if (!currentCompanyId) {
         const { data: companies, error: companyError } = await supabase
           .from('empresas')
@@ -63,9 +63,10 @@ function DiagnosticContent() {
           .order('created_at')
           .limit(1);
         if (companyError || !companies?.[0]) throw new Error('Empresa não encontrada para este login.');
-        currentCompanyId = companies[0].id;
+        currentCompanyId = String(companies[0].id);
         setEmpresaId(currentCompanyId);
       }
+      if (!currentCompanyId) throw new Error('Empresa não encontrada para este login.');
 
       const response = await authFetch(`/api/integracoes/evolution/diagnostico?empresa_id=${encodeURIComponent(currentCompanyId)}`);
       const payload = await response.json().catch(() => ({}));
