@@ -17,71 +17,22 @@ export const todayISO = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-const dateToISO = (date: Date) => {
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
+export const addMonthsISO = (date: string, months: number) => {
+  const parsed = new Date(`${date}T12:00:00`);
+  parsed.setMonth(parsed.getMonth() + months);
+  const yyyy = parsed.getFullYear();
+  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+  const dd = String(parsed.getDate()).padStart(2, '0');
   return `${yyyy}-${mm}-${dd}`;
 };
-
-const fixedMonthlyDueDateISO = (firstDueDate: string, monthOffset: number) => {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(firstDueDate);
-
-  // Mantém compatibilidade caso algum valor antigo não esteja no formato ISO esperado.
-  if (!match) {
-    const parsed = new Date(`${firstDueDate}T12:00:00`);
-    parsed.setMonth(parsed.getMonth() + monthOffset);
-    return dateToISO(parsed);
-  }
-
-  const baseYear = Number(match[1]);
-  const baseMonth = Number(match[2]) - 1;
-  const baseDay = Number(match[3]);
-
-  // Cada parcela parte sempre da data-base original, nunca da parcela anterior.
-  const targetMonth = new Date(baseYear, baseMonth + monthOffset, 1, 12, 0, 0, 0);
-  const lastDayOfTargetMonth = new Date(
-    targetMonth.getFullYear(),
-    targetMonth.getMonth() + 1,
-    0,
-    12,
-    0,
-    0,
-    0
-  ).getDate();
-
-  // Ex.: dia 31 em fevereiro vira o último dia de fevereiro; em março volta ao dia 31.
-  const nominalDay = Math.min(Math.max(baseDay, 1), lastDayOfTargetMonth);
-  const dueDate = new Date(
-    targetMonth.getFullYear(),
-    targetMonth.getMonth(),
-    nominalDay,
-    12,
-    0,
-    0,
-    0
-  );
-
-  // Final de semana altera somente o vencimento daquele mês.
-  if (dueDate.getDay() === 6) dueDate.setDate(dueDate.getDate() + 2);
-  else if (dueDate.getDay() === 0) dueDate.setDate(dueDate.getDate() + 1);
-
-  return dateToISO(dueDate);
-};
-
-/**
- * Gera vencimentos mensais mantendo o dia fixo da primeira parcela.
- * Sábado e domingo são deslocados para a segunda-feira seguinte.
- */
-export const addMonthsISO = (date: string, months: number) => fixedMonthlyDueDateISO(date, months);
-
-// Nome explícito para novos pontos do sistema que gerarem parcelas futuramente.
-export const installmentDueDateISO = fixedMonthlyDueDateISO;
 
 export const addDaysISO = (date: string, days: number) => {
   const parsed = new Date(`${date}T12:00:00`);
   parsed.setDate(parsed.getDate() + days);
-  return dateToISO(parsed);
+  const yyyy = parsed.getFullYear();
+  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
+  const dd = String(parsed.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 };
 
 export const getParcelaSituacao = (parcela: Pick<Parcela, 'status' | 'vencimento'>) => {
