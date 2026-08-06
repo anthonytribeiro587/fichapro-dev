@@ -17,22 +17,67 @@ export const todayISO = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
+const dateToISO = (date: Date) => {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 export const addMonthsISO = (date: string, months: number) => {
   const parsed = new Date(`${date}T12:00:00`);
   parsed.setMonth(parsed.getMonth() + months);
-  const yyyy = parsed.getFullYear();
-  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
-  const dd = String(parsed.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return dateToISO(parsed);
+};
+
+/**
+ * Mantém o dia da primeira parcela como referência para cada mês.
+ * Se o mês não possuir esse dia (ex.: dia 31 em fevereiro), usa o último
+ * dia disponível. Depois, somente o vencimento daquele mês é deslocado
+ * para segunda-feira quando cair no fim de semana.
+ *
+ * Cada parcela é calculada sempre a partir da data-base original; portanto,
+ * um vencimento deslocado para segunda não altera o dia fixo dos meses seguintes.
+ */
+export const installmentDueDateISO = (firstDueDate: string, monthOffset: number) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(firstDueDate);
+  if (!match) return addMonthsISO(firstDueDate, monthOffset);
+
+  const baseYear = Number(match[1]);
+  const baseMonth = Number(match[2]) - 1;
+  const baseDay = Number(match[3]);
+  const targetMonth = new Date(baseYear, baseMonth + monthOffset, 1, 12, 0, 0, 0);
+  const lastDayOfTargetMonth = new Date(
+    targetMonth.getFullYear(),
+    targetMonth.getMonth() + 1,
+    0,
+    12,
+    0,
+    0,
+    0
+  ).getDate();
+
+  const nominalDay = Math.min(Math.max(baseDay, 1), lastDayOfTargetMonth);
+  const dueDate = new Date(
+    targetMonth.getFullYear(),
+    targetMonth.getMonth(),
+    nominalDay,
+    12,
+    0,
+    0,
+    0
+  );
+
+  if (dueDate.getDay() === 6) dueDate.setDate(dueDate.getDate() + 2);
+  if (dueDate.getDay() === 0) dueDate.setDate(dueDate.getDate() + 1);
+
+  return dateToISO(dueDate);
 };
 
 export const addDaysISO = (date: string, days: number) => {
   const parsed = new Date(`${date}T12:00:00`);
   parsed.setDate(parsed.getDate() + days);
-  const yyyy = parsed.getFullYear();
-  const mm = String(parsed.getMonth() + 1).padStart(2, '0');
-  const dd = String(parsed.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
+  return dateToISO(parsed);
 };
 
 export const getParcelaSituacao = (parcela: Pick<Parcela, 'status' | 'vencimento'>) => {
